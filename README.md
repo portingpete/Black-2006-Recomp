@@ -10,6 +10,11 @@ mission briefing, movement, shooting, and reloading with audio. This is still a
 work in progress: later missions are unverified, crashes and rendering issues
 remain possible, and Xbox GP/EP audio effects are not fully emulated.
 
+Gameplay voices and effects now honor their source sample rate at the 48 kHz
+audio output. This corrects 32 kHz speech playing about 50% too fast and high.
+The [APU regression test](tests/apu_pitch/README.md) checks pitch, duration,
+stream completion, and playback lifecycle without game files or an audio device.
+
 This repository contains host source and build tooling. **You must supply your
 own original Xbox game files.** Game assets, the XBE, generated game-function
 bodies, recordings, and prebuilt executables are excluded.
