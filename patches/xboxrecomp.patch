@@ -1326,10 +1326,10 @@ index caef326..161c0eb 100644
  target_include_directories(xbox_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 diff --git a/src/input/pc_input.c b/src/input/pc_input.c
 new file mode 100644
-index 0000000..3fe6c5d
+index 0000000..871ef7e
 --- /dev/null
 +++ b/src/input/pc_input.c
-@@ -0,0 +1,1308 @@
+@@ -0,0 +1,1319 @@
 +/*
 + * pc_input.c -- native keyboard and mouse for BLACK. See pc_input.h for the design.
 + *
@@ -1508,14 +1508,15 @@ index 0000000..3fe6c5d
 +static volatile LONG64 s_pulse[CTL_COUNT_BUTTONS];   /* control forced on until this time */
 +static volatile LONG s_dx, s_dy;
 +static volatile LONG s_focused = 1, s_captured;
-+/* Slot 0: the Video Settings page; slot 1: the native menus underneath it. The first that takes an event has it. */
-+static const PcInputFilter *volatile s_filters[2];
++/* Movies own input ahead of the Video Settings page and native menus. */
++static const PcInputFilter *volatile s_filters[3];
++static const unsigned s_filter_order[3] = { 2, 0, 1 };
 +
 +static int filter_key(unsigned id, int down, int repeat)
 +{
 +    int i;
-+    for (i = 0; i < 2; i++) {
-+        const PcInputFilter *f = s_filters[i];
++    for (i = 0; i < 3; i++) {
++        const PcInputFilter *f = s_filters[s_filter_order[i]];
 +        if (f && f->key && f->key(id, down, repeat)) return 1;
 +    }
 +    return 0;
@@ -1524,8 +1525,8 @@ index 0000000..3fe6c5d
 +static int filter_button(int button, int down)
 +{
 +    int i;
-+    for (i = 0; i < 2; i++) {
-+        const PcInputFilter *f = s_filters[i];
++    for (i = 0; i < 3; i++) {
++        const PcInputFilter *f = s_filters[s_filter_order[i]];
 +        if (f && f->button && f->button(button, down)) return 1;
 +    }
 +    return 0;
@@ -1534,8 +1535,8 @@ index 0000000..3fe6c5d
 +static int filter_wheel(int delta)
 +{
 +    int i;
-+    for (i = 0; i < 2; i++) {
-+        const PcInputFilter *f = s_filters[i];
++    for (i = 0; i < 3; i++) {
++        const PcInputFilter *f = s_filters[s_filter_order[i]];
 +        if (f && f->wheel && f->wheel(delta)) return 1;
 +    }
 +    return 0;
@@ -1544,8 +1545,8 @@ index 0000000..3fe6c5d
 +static int filter_report(uint8_t out[20], int pad_present)
 +{
 +    int i;
-+    for (i = 0; i < 2; i++) {
-+        const PcInputFilter *f = s_filters[i];
++    for (i = 0; i < 3; i++) {
++        const PcInputFilter *f = s_filters[s_filter_order[i]];
 +        if (f && f->report && f->report(out, pad_present)) return 1;
 +    }
 +    return 0;
@@ -2028,7 +2029,10 @@ index 0000000..3fe6c5d
 +    if (!s_focused && down) return;
 +    now = now_ms();
 +    observe_button_device(button, down, now);
-+    if (filter_button(button, down)) return;
++    if (filter_button(button, down)) {
++        if (button >= 0 && button < 5) discard_src(SRC_MOUSE0 + (unsigned)button);
++        return;
++    }
 +    button_event_internal(button, down, now);
 +}
 +
@@ -2072,6 +2076,13 @@ index 0000000..3fe6c5d
 +    pc_input_init();
 +    focused = focused ? 1 : 0;
 +    if (focused == s_focused) return;   /* minimise and WM_KILLFOCUS can describe the same loss */
++    {
++        int i;
++        for (i = 0; i < 3; ++i) {
++            const PcInputFilter *f = s_filters[s_filter_order[i]];
++            if (f && f->focus) f->focus(focused);
++        }
++    }
 +    now = now_ms();
 +    if (!focused) {
 +        int was = pc_input_gameplay_active() && !movie_active();
@@ -2567,7 +2578,7 @@ index 0000000..3fe6c5d
 +{
 +    if (id >= SRC_MOUSE0 && id < SRC_MOUSE0 + 5) {
 +        observe_button_device((int)(id - SRC_MOUSE0), down, now);
-+        if (filter_button((int)(id - SRC_MOUSE0), down)) return;
++        if (filter_button((int)(id - SRC_MOUSE0), down)) { discard_src(id); return; }
 +        button_event_internal((int)(id - SRC_MOUSE0), down, now);
 +    } else if (id == SRC_WHEEL_UP || id == SRC_WHEEL_DOWN) {
 +        if (down) {
@@ -2608,7 +2619,7 @@ index 0000000..3fe6c5d
 +}
 +
 +void pc_input_set_filter(const PcInputFilter *filter) { s_filters[0] = filter; }
-+void pc_input_set_filter_slot(int slot, const PcInputFilter *filter) { if (slot >= 0 && slot < 2) s_filters[slot] = filter; }
++void pc_input_set_filter_slot(int slot, const PcInputFilter *filter) { if (slot >= 0 && slot < 3) s_filters[slot] = filter; }
 +
 +/* ---- tests -------------------------------------------------------------------------------------------------------------- */
 +
@@ -2640,10 +2651,10 @@ index 0000000..3fe6c5d
 +void pc_input_test_set_layout_labels(int layout_aware) { s_layout_labels = layout_aware; }
 diff --git a/src/input/pc_input.h b/src/input/pc_input.h
 new file mode 100644
-index 0000000..bdb98cb
+index 0000000..70ead0c
 --- /dev/null
 +++ b/src/input/pc_input.h
-@@ -0,0 +1,205 @@
+@@ -0,0 +1,206 @@
 +/*
 + * pc_input.h -- native keyboard and mouse for BLACK.
 + *
@@ -2764,9 +2775,10 @@ index 0000000..bdb98cb
 +    int (*button)(int button, int down);
 +    int (*wheel)(int delta);
 +    int (*report)(uint8_t out[20], int pad_present);
++    void (*focus)(int focused); /* Optional notification; cancels transient confirmations. */
 +} PcInputFilter;
 +void pc_input_set_filter(const PcInputFilter *filter);
-+/* Slot 0 is the Video Settings page (pc_input_set_filter); slot 1 the native menus, consulted after it. */
++/* Priority: slot 2 (native movies), slot 0 (Video Settings), slot 1 (native menus). */
 +void pc_input_set_filter_slot(int slot, const PcInputFilter *filter);
 +
 +/* ---- host events (presenter/UI thread) ------------------------------------------------------ */
@@ -31748,10 +31760,10 @@ index 1e4b250..959f683 100644
      return 20;
  }
 diff --git a/src/video/CMakeLists.txt b/src/video/CMakeLists.txt
-index 2189a3b..dc59712 100644
+index 2189a3b..175c522 100644
 --- a/src/video/CMakeLists.txt
 +++ b/src/video/CMakeLists.txt
-@@ -3,12 +3,16 @@ add_library(xbox_video STATIC
+@@ -3,12 +3,17 @@ add_library(xbox_video STATIC
      video_player.c
      video_pump.c
      fb_present.c
@@ -31759,6 +31771,7 @@ index 2189a3b..dc59712 100644
 +    pc_video_menu.c
 +    pc_menu.c
 +    pc_menu_assets.c
++    pc_movie_skip.c
  )
  target_include_directories(xbox_video PUBLIC
      ${CMAKE_CURRENT_SOURCE_DIR}
@@ -31771,10 +31784,10 @@ index 2189a3b..dc59712 100644
 +    target_link_libraries(xbox_video PUBLIC mfplat mfreadwrite mfuuid mf ole32 gdi32 user32)
  endif()
 diff --git a/src/video/fb_present.c b/src/video/fb_present.c
-index 69ced11..f80145b 100644
+index 69ced11..2b2c994 100644
 --- a/src/video/fb_present.c
 +++ b/src/video/fb_present.c
-@@ -1,219 +1,967 @@
+@@ -1,219 +1,973 @@
 -/**
 - * Show the guest framebuffer in a window.
 - *
@@ -31802,6 +31815,7 @@ index 69ced11..f80145b 100644
 +#include "pc_video.h"
 +#include "pc_video_menu.h"
 +#include "pc_menu.h"
++#include "pc_movie_skip.h"
  #if defined(_WIN32)
 +#define COBJMACROS
  #include <windows.h>
@@ -32220,6 +32234,10 @@ index 69ced11..f80145b 100644
 +    if (s_ui_cursor_hidden) { ShowCursor(TRUE); s_ui_cursor_hidden = 0; }
 +    s_ui_captured = 0;
 +    pc_input_capture_changed(0);
++}
++static int fb_movie_input_active(void)
++{
++    return xbox_FramebufferMovieActive() || pc_movie_skip_active();
 +}
 +static void fb_capture_update(HWND hwnd)
 +{
@@ -32755,7 +32773,8 @@ index 69ced11..f80145b 100644
 +    pc_input_init();
 +    pc_video_menu_install();
 +    pc_menu_install();
-+    pc_input_set_movie_active_query(xbox_FramebufferMovieActive);
++    pc_movie_skip_install();
++    pc_input_set_movie_active_query(fb_movie_input_active);
 +    {
 +        RAWINPUTDEVICE mouse;
 +        mouse.usUsagePage = 0x01; mouse.usUsage = 0x02; mouse.dwFlags = 0; mouse.hwndTarget = hwnd;
@@ -33081,10 +33100,10 @@ index 0000000..15dfe54
 +#endif
 diff --git a/src/video/pc_menu.c b/src/video/pc_menu.c
 new file mode 100644
-index 0000000..7f1196c
+index 0000000..b558e44
 --- /dev/null
 +++ b/src/video/pc_menu.c
-@@ -0,0 +1,2264 @@
+@@ -0,0 +1,2338 @@
 +/* Native, editable menus. See pc_menu.h.
 + *
 + * The page logic follows the menu classes the game's own pages are written with (BkMenuList,
@@ -33716,6 +33735,7 @@ index 0000000..7f1196c
 +typedef struct Image { uint32_t *pixels; unsigned w, h; } Image;
 +
 +static Font m_font[PCM_FONT_COUNT];
++static volatile LONG m_font_ready;
 +static Image m_image[PCM_IMAGE_COUNT];
 +
 +static uint32_t premultiply(uint32_t c)
@@ -33743,7 +33763,13 @@ index 0000000..7f1196c
 +    nf.cap_oy = nf.map['A'] ? nf.glyphs[nf.map['A'] - 1].oy : 0.0f;
 +    free(m_font[slot].pixels); free(m_font[slot].glyphs); free(m_font[slot].map);
 +    m_font[slot] = nf;
++    InterlockedOr(&m_font_ready, 1L << slot);
 +    return 1;
++}
++
++int pc_menu_has_font(int slot)
++{
++    return slot >= 0 && slot < PCM_FONT_COUNT && (InterlockedCompareExchange(&m_font_ready, 0, 0) & (1L << slot)) != 0;
 +}
 +
 +int pc_menu_set_image(int slot, const uint32_t *pixels, unsigned w, unsigned h)
@@ -33825,6 +33851,7 @@ index 0000000..7f1196c
 +static volatile ULONGLONG m_overlay_seen;
 +static int m_overlay_assumed;              /* tests: no presenter */
 +static volatile LONG m_input_seen;         /* the player used a page since pc_menu_take_input last asked */
++static volatile LONG m_movie_skip_prompt;
 +static const uint64_t *m_replaced;         /* earlier built-in definitions (FNV-1a 64 of the file) */
 +static int m_nreplaced;
 +
@@ -33839,6 +33866,7 @@ index 0000000..7f1196c
 +
 +void pc_menu_set_default_definition(const char *text) { m_default_text = text; }
 +void pc_menu_set_replaced_defaults(const uint64_t *fnv1a, int count) { m_replaced = fnv1a; m_nreplaced = count; }
++void pc_menu_set_movie_skip_prompt(int visible) { InterlockedExchange(&m_movie_skip_prompt, visible ? 1 : 0); }
 +
 +static uint64_t fnv1a(const char *s)
 +{
@@ -34799,7 +34827,7 @@ index 0000000..7f1196c
 +    return take;
 +}
 +
-+static const PcInputFilter k_filter = { f_key, f_button, f_wheel, f_report };
++static const PcInputFilter k_filter = { f_key, f_button, f_wheel, f_report, NULL };
 +
 +void pc_menu_install(void)
 +{
@@ -35156,7 +35184,7 @@ index 0000000..7f1196c
 +    return 1;
 +}
 +
-+int pc_menu_overlay(unsigned w, unsigned h, int px, int py, unsigned pw, unsigned ph, const uint32_t **pixels, int *changed)
++static int page_overlay(unsigned w, unsigned h, int px, int py, unsigned pw, unsigned ph, const uint32_t **pixels, int *changed)
 +{
 +    const uint32_t *video = NULL;
 +    int video_changed = 0, video_on, menu_on, menu_changed = 0, nboxes = -1, i;
@@ -35255,6 +35283,68 @@ index 0000000..7f1196c
 +    return 1;
 +}
 +
++/* The hint is a separate layer: its pixels never enter the cached page pixels, so hiding it
++ * restores exactly the page underneath. A change to this layer invalidates the whole upload;
++ * ordinary pages retain their existing small dirty regions while the hint is hidden. */
++int pc_menu_overlay(unsigned w, unsigned h, int px, int py, unsigned pw, unsigned ph, const uint32_t **pixels, int *changed)
++{
++    static uint32_t *hint, *composed;
++    static unsigned hw, hh;
++    static int hint_was_on, base_was_on;
++    const uint32_t *base = NULL;
++    int base_changed = 0, hint_changed = 0;
++    const int base_on = page_overlay(w, h, px, py, pw, ph, &base, &base_changed);
++    int hint_on = InterlockedCompareExchange(&m_movie_skip_prompt, 0, 0) && w && h && pw && ph &&
++                  m_font[PCM_FONT_SMALL].pixels;
++    if (hint_on && (hw != w || hh != h || !hint || !composed)) {
++        uint32_t *next_hint = (uint32_t *)malloc((size_t)w * h * 4);
++        uint32_t *next_composed = (uint32_t *)malloc((size_t)w * h * 4);
++        if (!next_hint || !next_composed) { free(next_hint); free(next_composed); hint_on = 0; }
++        else {
++            free(hint); free(composed);
++            hint = next_hint; composed = next_composed; hw = w; hh = h;
++            hint_changed = 1;
++        }
++    }
++    if (!hint_on) {
++        *changed = base_changed || hint_was_on;
++        if (hint_was_on && base_on) { m_dirty.x0 = m_dirty.y0 = 0; m_dirty.x1 = (int)w; m_dirty.y1 = (int)h; }
++        hint_was_on = 0; base_was_on = base_on;
++        if (base_on) *pixels = base;
++        return base_on;
++    }
++    hint_changed |= !hint_was_on;
++    if (hint_changed) {
++        static Display d;
++        static const uint16_t text[] = { 'P','r','e','s','s',' ','a','g','a','i','n',' ','t','o',' ','s','k','i','p',0 };
++        Canvas c;
++        float right, bottom, tw;
++        d.n = 0; d.slide = 0;
++        /* Movie aspect/letterboxing must not pull the prompt into the middle of
++         * an ultrawide window. Its safe margin belongs to the client area. */
++        canvas_for(&c, hint, w, h, 0, 0, w, h);
++        right = ((float)w - c.ox) / c.s - 20.0f;
++        bottom = ((float)h - c.oy) / c.s - 20.0f;
++        tw = text_width(PCM_FONT_SMALL, text, 16.0f);
++        rect(&d, right - tw - 20.0f, bottom - 30.0f, tw + 20.0f, 30.0f, 0xCC101010u, 0);
++        text_prim(&d, PCM_FONT_SMALL, right - tw - 10.0f, bottom - 23.0f, 16.0f, 1.0f, 0xFFE5E5E5u, text);
++        render(&d, hint, w, h, 0, 0, w, h);
++    }
++    *changed = base_changed || hint_changed || base_on != base_was_on;
++    if (base_on) {
++        if (*changed) {
++            const size_t n = (size_t)w * h;
++            size_t i;
++            memcpy(composed, base, n * 4);
++            for (i = 0; i < n; i++) blend(composed + i, hint[i]);
++        }
++        *pixels = composed;
++    } else *pixels = hint;
++    if (*changed) { m_dirty.x0 = m_dirty.y0 = 0; m_dirty.x1 = (int)w; m_dirty.y1 = (int)h; }
++    hint_was_on = 1; base_was_on = base_on;
++    return 1;
++}
++
 +/* ---- tests -------------------------------------------------------------------------------------------------------- */
 +
 +void pc_menu_test_reset(const char *definition)
@@ -35276,6 +35366,7 @@ index 0000000..7f1196c
 +    m_page = -1; m_page_name[0] = 0; m_focus = m_prev_focus = -1; m_depth = 0;
 +    m_disabled = 0;
 +    InterlockedExchange(&m_input_seen, 0);
++    pc_menu_set_movie_skip_prompt(0);
 +    m_overlay_assumed = 1;
 +    strcpy(m_path, "<test>");
 +    vars_clear();
@@ -35330,9 +35421,11 @@ index 0000000..7f1196c
 +
 +#else  /* !_WIN32 */
 +int pc_menu_set_font(int slot, const PcMenuFont *font) { (void)slot; (void)font; return 0; }
++int pc_menu_has_font(int slot) { (void)slot; return 0; }
 +int pc_menu_set_image(int slot, const uint32_t *p, unsigned w, unsigned h) { (void)slot; (void)p; (void)w; (void)h; return 0; }
 +void pc_menu_set_default_definition(const char *text) { (void)text; }
 +void pc_menu_set_replaced_defaults(const uint64_t *h, int n) { (void)h; (void)n; }
++void pc_menu_set_movie_skip_prompt(int visible) { (void)visible; }
 +int pc_menu_take_input(void) { return 0; }
 +int pc_menu_tick(const char *page, int ready, const PcMenuHost *host) { (void)page; (void)ready; (void)host; return 0; }
 +void pc_menu_install(void) {}
@@ -35351,10 +35444,10 @@ index 0000000..7f1196c
 +#endif
 diff --git a/src/video/pc_menu.h b/src/video/pc_menu.h
 new file mode 100644
-index 0000000..6080464
+index 0000000..c47114d
 --- /dev/null
 +++ b/src/video/pc_menu.h
-@@ -0,0 +1,152 @@
+@@ -0,0 +1,160 @@
 +/*
 + * pc_menu.h -- native, editable menus, drawn by the presenter over the game picture.
 + *
@@ -35407,6 +35500,9 @@ index 0000000..6080464
 +} PcMenuFont;
 +
 +int pc_menu_set_font(int slot, const PcMenuFont *font);
++/* Any thread: a font has been successfully registered. Assets are registered during initialization;
++ * use this to share that initialization between menus and movie hints without replacing a live atlas. */
++int pc_menu_has_font(int slot);
 +/* A straight-alpha BGRA image, copied. */
 +int pc_menu_set_image(int slot, const uint32_t *pixels, unsigned width, unsigned height);
 +
@@ -35471,6 +35567,11 @@ index 0000000..6080464
 + * native page takes all input, so the game's own idle checks (an attract mode) would see none: the game project
 + * counts this as input there. */
 +int pc_menu_take_input(void);
++
++/* Any thread: show the cutscene's "Press again to skip" hint in the client area's bottom-right
++ * corner, including when no native page is open. The game clears it on timeout, skip or movie end.
++ * Uses the registered small font; this does not open a page or take input. */
++void pc_menu_set_movie_skip_prompt(int visible);
 +
 +/* Presenter thread: the overlay for a client area of w x h, with the game picture at (px, py, pw, ph).
 + * Video Settings uses this same page renderer. The legacy overlay remains available for fallback runs. Same contract as
@@ -36367,7 +36468,7 @@ index 0000000..776476a
 +#endif /* XBOXRECOMP_PC_VIDEO_H */
 diff --git a/src/video/pc_video_menu.c b/src/video/pc_video_menu.c
 new file mode 100644
-index 0000000..bc28ee8
+index 0000000..3938e3a
 --- /dev/null
 +++ b/src/video/pc_video_menu.c
 @@ -0,0 +1,767 @@
@@ -36724,7 +36825,7 @@ index 0000000..bc28ee8
 +    return take;
 +}
 +
-+static const PcInputFilter k_filter = { f_key, f_button, f_wheel, f_report };
++static const PcInputFilter k_filter = { f_key, f_button, f_wheel, f_report, NULL };
 +
 +void pc_video_menu_install(void)
 +{
@@ -39337,3 +39438,272 @@ index 4c840a1..848edb7 100644
      def _write_dispatch_table(self, translations, output_path, header_name):
          """
          Generate a dispatch table mapping Xbox VA -> function pointer.
+diff --git a/src/video/pc_movie_skip.c b/src/video/pc_movie_skip.c
+new file mode 100644
+index 0000000..e4a5da3
+--- /dev/null
++++ b/src/video/pc_movie_skip.c
+@@ -0,0 +1,236 @@
++/* BLACK's native XMV input. Decoder ownership and EOF stay with the guest. */
++#include "pc_movie_skip.h"
++#include "pc_menu.h"
++#include "../input/pc_input.h"
++#include <stdio.h>
++#include <string.h>
++#ifndef WIN32_LEAN_AND_MEAN
++#define WIN32_LEAN_AND_MEAN
++#endif
++#include <windows.h>
++
++#define MOVIE_LEASE_MS 500u
++#define CONFIRM_MS 3000u
++#define KEY_ESC 0x001u
++#define KEY_ENTER 0x01Cu
++#define KEY_SPACE 0x039u
++#define KEY_NUMENTER 0x11Cu
++#define KEY_F11 0x057u
++
++static SRWLOCK m_lock = SRWLOCK_INIT;
++static uint64_t m_session, m_seen, m_confirm;
++static int m_kind, m_request, m_release;
++static int m_focused = 1;
++/* Physical state survives movie transitions, so a held button cannot affect the
++ * next movie. Consumed releases also stay consumed after the movie ends. */
++static unsigned m_keys, m_pad, m_mouse;
++static unsigned char m_swallowed[0x200];
++static unsigned m_mouse_swallowed;
++static int m_pad_swallowed;
++#ifdef PC_MOVIE_SKIP_TEST
++static uint64_t m_test_now;
++void pc_movie_skip_test_time(uint64_t now) { m_test_now = now; }
++static uint64_t now_ms(void) { return m_test_now; }
++#else
++static uint64_t now_ms(void) { return GetTickCount64(); }
++#endif
++
++static void retire_locked(void)
++{
++    m_session = m_seen = m_confirm = 0;
++    m_kind = PC_MOVIE_SKIP_NONE;
++    m_request = 0;
++    m_release = (m_keys | m_pad | m_mouse) != 0;
++    pc_menu_set_movie_skip_prompt(0);
++}
++
++static int active_locked(uint64_t now)
++{
++    if (m_kind && (now < m_seen || now - m_seen > MOVIE_LEASE_MS)) retire_locked();
++    if (m_confirm && now >= m_confirm) {
++        m_confirm = 0;
++        pc_menu_set_movie_skip_prompt(0);
++    }
++    return m_kind != PC_MOVIE_SKIP_NONE;
++}
++
++static void press_locked(uint64_t now)
++{
++    if (!m_focused || !active_locked(now) || m_release || m_request) return;
++    m_release = 1;
++    if (m_kind == PC_MOVIE_SKIP_INTRO || m_confirm) {
++        m_request = 1;
++        m_confirm = 0;
++        pc_menu_set_movie_skip_prompt(0);
++        fprintf(stderr, "[MOVIE] skip requested (%s)\n",
++                m_kind == PC_MOVIE_SKIP_INTRO ? "intro" : "confirmed");
++    } else {
++        m_confirm = now + CONFIRM_MS;
++        pc_menu_set_movie_skip_prompt(1);
++        fprintf(stderr, "[MOVIE] confirmation: Press again to skip\n");
++    }
++}
++
++static void release_locked(void)
++{
++    if (!(m_keys | m_pad | m_mouse)) m_release = 0;
++}
++
++void pc_movie_skip_update(uint64_t session, int kind, int playing)
++{
++    const uint64_t now = now_ms();
++    AcquireSRWLockExclusive(&m_lock);
++    active_locked(now);
++    if (!playing || !session || kind < PC_MOVIE_SKIP_INTRO || kind > PC_MOVIE_SKIP_CUTSCENE) {
++        retire_locked();
++    } else {
++        if (m_session != session || m_kind != kind) {
++            retire_locked();
++            m_session = session;
++            m_kind = kind;
++        }
++        m_seen = now;
++    }
++    ReleaseSRWLockExclusive(&m_lock);
++}
++
++int pc_movie_skip_take_request(uint64_t session)
++{
++    int take;
++    AcquireSRWLockExclusive(&m_lock);
++    take = active_locked(now_ms()) && session == m_session && m_request;
++    if (take) retire_locked();
++    ReleaseSRWLockExclusive(&m_lock);
++    return take;
++}
++
++void pc_movie_skip_clear(void)
++{
++    AcquireSRWLockExclusive(&m_lock);
++    retire_locked();
++    ReleaseSRWLockExclusive(&m_lock);
++}
++
++int pc_movie_skip_active(void)
++{
++    int active;
++    AcquireSRWLockExclusive(&m_lock);
++    active = active_locked(now_ms());
++    ReleaseSRWLockExclusive(&m_lock);
++    return active;
++}
++
++static unsigned key_bit(unsigned id)
++{
++    switch (id) {
++    case KEY_ESC: return 1u;
++    case KEY_ENTER: return 2u;
++    case KEY_SPACE: return 4u;
++    case KEY_NUMENTER: return 8u;
++    default: return 0u;
++    }
++}
++
++static int f_key(unsigned id, int down, int repeat)
++{
++    const uint64_t now = now_ms();
++    const unsigned bit = key_bit(id);
++    int active, take;
++    if (id >= sizeof(m_swallowed) || id == KEY_F11) return 0;
++    AcquireSRWLockExclusive(&m_lock);
++    active = active_locked(now);
++    take = active || m_swallowed[id];
++    if (down) {
++        const int edge = bit && !(m_keys & bit) && !repeat;
++        m_keys |= bit;
++        if (active) m_swallowed[id] = 1;
++        if (edge) press_locked(now);
++    } else {
++        m_keys &= ~bit;
++        m_swallowed[id] = 0;
++        release_locked();
++    }
++    ReleaseSRWLockExclusive(&m_lock);
++    return take;
++}
++
++static int f_button(int button, int down)
++{
++    const uint64_t now = now_ms();
++    unsigned bit;
++    int active, take;
++    if (button < 0 || button > 4) return 0;
++    bit = 1u << button;
++    AcquireSRWLockExclusive(&m_lock);
++    active = active_locked(now);
++    take = active || (m_mouse_swallowed & bit) != 0;
++    if (down) {
++        const int edge = button == 0 && !m_mouse;
++        if (button == 0) m_mouse = 1;
++        if (active) m_mouse_swallowed |= bit;
++        if (edge) press_locked(now);
++    } else {
++        if (button == 0) m_mouse = 0;
++        m_mouse_swallowed &= ~bit;
++        release_locked();
++    }
++    ReleaseSRWLockExclusive(&m_lock);
++    return take;
++}
++
++static int f_wheel(int delta) { (void)delta; return pc_movie_skip_active(); }
++
++static int f_report(uint8_t out[20], int pad_present)
++{
++    const uint64_t now = now_ms();
++    /* Xbox report: digital START, analog A/B. A real or scripted pad
++     * enters the same filter before the guest can act on its own skip input. */
++    const unsigned down = pad_present ?
++        ((out[2] & 0x10u) ? 1u : 0u) |
++        ((out[4] > 30u) ? 2u : 0u) | ((out[5] > 30u) ? 4u : 0u) : 0u;
++    int active, take;
++    AcquireSRWLockExclusive(&m_lock);
++    active = active_locked(now);
++    take = active || (m_pad_swallowed && down);
++    {
++        const unsigned edge = down & ~m_pad;
++        m_pad = down;
++        if (active && down) m_pad_swallowed = 1;
++        if (edge) press_locked(now);
++        if (!down) m_pad_swallowed = 0;
++        release_locked();
++    }
++    ReleaseSRWLockExclusive(&m_lock);
++    return take;
++}
++
++static void f_focus(int focused)
++{
++    AcquireSRWLockExclusive(&m_lock);
++    m_focused = focused != 0;
++    m_release = 1; /* A held pad on focus return needs a fresh release. */
++    if (!focused) {
++        m_confirm = m_request = 0;
++        pc_menu_set_movie_skip_prompt(0);
++        /* Key-up may go to another window; require a fresh release on return. */
++        m_keys = m_mouse = 0;
++        m_release = 1;
++    }
++    ReleaseSRWLockExclusive(&m_lock);
++}
++
++static const PcInputFilter k_filter = { f_key, f_button, f_wheel, f_report, f_focus };
++void pc_movie_skip_install(void) { pc_input_set_filter_slot(2, &k_filter); }
++
++#ifdef PC_MOVIE_SKIP_TEST
++void pc_movie_skip_test_reset(void)
++{
++    AcquireSRWLockExclusive(&m_lock);
++    m_keys = m_pad = m_mouse = m_mouse_swallowed = 0;
++    m_pad_swallowed = 0;
++    m_focused = 1;
++    memset(m_swallowed, 0, sizeof(m_swallowed));
++    retire_locked();
++    ReleaseSRWLockExclusive(&m_lock);
++}
++#endif
+diff --git a/src/video/pc_movie_skip.h b/src/video/pc_movie_skip.h
+new file mode 100644
+index 0000000..725072f
+--- /dev/null
++++ b/src/video/pc_movie_skip.h
+@@ -0,0 +1,21 @@
++#ifndef XBOXRECOMP_PC_MOVIE_SKIP_H
++#define XBOXRECOMP_PC_MOVIE_SKIP_H
++#include <stdint.h>
++
++enum { PC_MOVIE_SKIP_NONE, PC_MOVIE_SKIP_INTRO, PC_MOVIE_SKIP_CUTSCENE };
++
++/* Game thread: refresh a playing movie's identity each pump. Zero playing or NONE
++ * retires it. A new identity always starts with an unarmed confirmation. */
++void pc_movie_skip_update(uint64_t session, int kind, int playing);
++int pc_movie_skip_take_request(uint64_t session);
++void pc_movie_skip_clear(void);
++/* Input/presenter threads: a fresh native movie currently owns input. */
++int pc_movie_skip_active(void);
++/* Install ahead of menu input filters. Called once by the presenter. */
++void pc_movie_skip_install(void);
++
++#ifdef PC_MOVIE_SKIP_TEST
++void pc_movie_skip_test_time(uint64_t now);
++void pc_movie_skip_test_reset(void);
++#endif
++#endif

@@ -642,8 +642,11 @@ static uint8_t *bnm_read_game_file(const char *xbox_path, size_t *size)
 static int bnm_load_font(int slot, const char *xbox_path)
 {
     size_t size = 0;
-    uint8_t *d = bnm_read_game_file(xbox_path, &size);
-    const int ok = d && pc_menu_load_font_file(slot, d, size);
+    uint8_t *d;
+    int ok;
+    if (pc_menu_has_font(slot)) return 1;
+    d = bnm_read_game_file(xbox_path, &size);
+    ok = d && pc_menu_load_font_file(slot, d, size);
     fprintf(stderr, "[MENU] font %s: %s\n", xbox_path, ok ? "loaded" : "NOT loaded");
     free(d);
     return ok;

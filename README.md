@@ -5,6 +5,13 @@ An experimental native Windows recompilation of the original Xbox release of
 keyboard and mouse controls, XInput controller support, video settings, a PC
 launcher, and native audio output. Movies are enabled by default.
 
+Startup logos skip on one press of Escape, Enter, Space, left click, or controller
+A / B / Start. During a cutscene, the first press shows **Press again to skip**
+in the bottom-right corner. Release and press again within three seconds to skip;
+holding a button cannot confirm. The hint also works with native menus disabled
+and stays at the window corner on ultrawide displays. Looping menu backgrounds
+keep playing normally. See the [movie skip tests](tests/movie_skip/README.md).
+
 Launch through the first mission has been tested, including the opening movies,
 mission briefing, movement, shooting, and reloading with audio. This is still a
 work in progress: later missions are unverified, crashes and rendering issues

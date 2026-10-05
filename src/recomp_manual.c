@@ -30,6 +30,8 @@
 #include <xbox/xboxrecomp.h>
 #include "pc_video.h"
 #include "pc_video_menu.h"
+#include "pc_movie_skip.h"
+#include "pc_menu.h"
 
 /* ── ICALL trace ring buffer ───────────────────────────────── */
 
@@ -136,7 +138,7 @@ static const recomp_func_t g_itrace_wrappers[ITRACE_SLOTS] = {
     itrace_12, itrace_13, itrace_14, itrace_15,
 };
 
-/* ── Movie skip (test convenience) ─────────────────────────── */
+/* ── Movie skip ───────────────────────────────────────────── */
 
 /*
  * BLACK plays every XMV movie through one pump, sub_000C4570 (esi = the
@@ -152,7 +154,9 @@ static const recomp_func_t g_itrace_wrappers[ITRACE_SLOTS] = {
  *
  *   RECOMP_BLACK_SKIP_MOVIES=1   end every movie at its first frame, except
  *                                a looping one
- *   Escape in the game window    end the movie playing now
+ *   Escape / Enter / Space, or controller A / B / Start:
+ *     startup logos end on one distinct press; other non-looping movies show
+ *     "Press again to skip" and require a released, second press.
  *
  * A looping movie (the front end's AK_n background, requested with flag 1
  * from 0x001299B9) is reopened at its end, so ending it early only reloads
@@ -160,43 +164,97 @@ static const recomp_func_t g_itrace_wrappers[ITRACE_SLOTS] = {
  * [0x002D45F0] + 0x2026C: its first field is the movie object, +0x198 the
  * request flags.
  *
- * For reaching menus and gameplay quickly; movies are not under test while
- * either is used. Wrapping needs tools.recomp --exclude-manual on this file
- * (scripts/regen-and-build.ps1 passes it).
+ * The automatic skip variable remains a lab convenience. Wrapping needs
+ * tools.recomp --exclude-manual on this file (scripts/regen-and-build.ps1
+ * passes it). The first-frame open and normal decoder teardown remain native.
  */
 extern void sub_000C4570_gen(void);
 
 static int movie_skip_all = -1;
-static int movie_skip_key_was_down;
+static int black_pc_ram_span(uint32_t address, uint32_t bytes);
+static void black_movie_skip_font(void);
 
 #define GUEST32(va) (*(uint32_t *)((uintptr_t)g_xbox_mem_offset + (va)))
 
-static int movie_is_looping(uint32_t movie_va)
-{
-    uint32_t base = GUEST32(0x002D45F0u);
-    uint32_t mgr = base + 0x2026Cu;
+typedef struct BlackMovieSkipIdentity {
+    uint32_t manager, movie, decoder;
+    int kind;
+    char stem[64];
+} BlackMovieSkipIdentity;
 
-    return base && GUEST32(mgr) == movie_va && (GUEST32(mgr + 0x198u) & 1u);
+static BlackMovieSkipIdentity movie_skip_identity;
+static uint64_t movie_skip_generation;
+static int movie_skip_playing;
+
+/* sub_001F3630 stores the requested stem at manager+84 and the full path at
+ * +44. Pending replacement/stop requests no longer describe the old decoder,
+ * so do not expose skip input for them. Unknown layouts keep native playback. */
+static int black_movie_skip_identify(uint32_t movie_va, BlackMovieSkipIdentity *out)
+{
+    uint32_t main, manager;
+    unsigned i;
+    const uint8_t *movie;
+    const char *stem;
+    memset(out, 0, sizeof(*out));
+    if (!black_pc_ram_span(0x002D45F0u, 4u) ||
+        !black_pc_ram_span(movie_va, 0x68u)) return 0;
+    main = GUEST32(0x002D45F0u);
+    if (!black_pc_ram_span(main, 0x20428u)) return 0;
+    manager = main + 0x2026Cu;
+    movie = (const uint8_t *)((uintptr_t)g_xbox_mem_offset + movie_va);
+    if (GUEST32(manager) != movie_va || GUEST32(manager + 0x1A8u) != 0x1Cu ||
+        GUEST32(movie_va + 0x48u) != 0x1Cu || movie[0x61] || movie[0x62] ||
+        *(const uint8_t *)((uintptr_t)g_xbox_mem_offset + manager + 0x1B8u) ||
+        *(const uint8_t *)((uintptr_t)g_xbox_mem_offset + manager + 0x1B9u) ||
+        (GUEST32(manager + 0x198u) & 1u)) return 0;
+    stem = (const char *)((uintptr_t)g_xbox_mem_offset + manager + 0x84u);
+    for (i = 0; i < sizeof(out->stem); ++i) {
+        out->stem[i] = stem[i];
+        if (!stem[i]) break;
+    }
+    if (i == sizeof(out->stem) || !out->stem[0]) return 0;
+    out->manager = manager;
+    out->movie = movie_va;
+    out->decoder = GUEST32(movie_va + 0x4Cu);
+    if (!out->decoder) return 0;
+    /* The installed LO_n_US.xmv contains both EA and Criterion startup logos.
+     * C_N_Us.xmv is the end credits; every other stem keeps confirmation. */
+    out->kind = !_stricmp(out->stem, "LO_n_US") ? PC_MOVIE_SKIP_INTRO : PC_MOVIE_SKIP_CUTSCENE;
+    return 1;
 }
 
-static int movie_skip_key_pressed(void)
+static uint64_t black_movie_skip_sync(uint32_t movie_va)
 {
-    DWORD pid = 0;
-    int down;
-
-    GetWindowThreadProcessId(GetForegroundWindow(), &pid);
-    down = pid == GetCurrentProcessId() &&
-           (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
-    if (down == movie_skip_key_was_down)
+    BlackMovieSkipIdentity identity;
+    if (!black_movie_skip_identify(movie_va, &identity)) {
+        movie_skip_playing = 0;
+        memset(&movie_skip_identity, 0, sizeof(movie_skip_identity));
+        pc_movie_skip_clear();
         return 0;
-    movie_skip_key_was_down = down;
-    return down;
+    }
+    if (!movie_skip_playing || memcmp(&identity, &movie_skip_identity, sizeof(identity))) {
+        if (!++movie_skip_generation) ++movie_skip_generation;
+        movie_skip_identity = identity;
+        fprintf(stderr, "[MOVIE] playing stem %s kind %s movie 0x%08X decoder 0x%08X session %llu\n",
+                identity.stem, identity.kind == PC_MOVIE_SKIP_INTRO ? "intro" : "cutscene",
+                identity.movie, identity.decoder, (unsigned long long)movie_skip_generation);
+    }
+    movie_skip_playing = 1;
+    if (identity.kind == PC_MOVIE_SKIP_CUTSCENE) black_movie_skip_font();
+    pc_movie_skip_update(movie_skip_generation, identity.kind, 1);
+    return movie_skip_generation;
 }
 
 void sub_000C4570(void)
 {
-    uint8_t *movie = (uint8_t *)((uintptr_t)g_xbox_mem_offset + g_esi);
-    int by_key;
+    const uint32_t movie_va = g_esi;
+    uint64_t session;
+    int by_input, by_environment;
+    unsigned csr = _mm_getcsr();
+    fenv_t environment;
+    fegetenv(&environment);
+    fesetenv(FE_DFL_ENV);
+    _mm_setcsr(0x1F80u);
 
     if (movie_skip_all < 0) {
         const char *env = getenv("RECOMP_BLACK_SKIP_MOVIES");
@@ -205,19 +263,35 @@ void sub_000C4570(void)
             fprintf(stderr, "[MOVIE] RECOMP_BLACK_SKIP_MOVIES: every movie "
                             "but a looping one ends at its first frame\n");
     }
-    by_key = movie_skip_key_pressed();
-    if (*(uint32_t *)(movie + 0x48) == 0x1C && !movie[0x62] &&
-        (by_key || (movie_skip_all && !movie_is_looping(g_esi)))) {
+    session = black_movie_skip_sync(movie_va);
+    by_input = session && pc_movie_skip_take_request(session);
+    by_environment = session && movie_skip_all;
+    if (by_input || by_environment) {
+        uint8_t *movie = (uint8_t *)((uintptr_t)g_xbox_mem_offset + movie_va);
         movie[0x62] = 1;
         fprintf(stderr, "[MOVIE] skipped (%s): movie 0x%08X decoder 0x%08X "
-                "caller 0x%08X\n", by_key ? "Escape" : "RECOMP_BLACK_SKIP_MOVIES",
-                g_esi, *(uint32_t *)(movie + 0x4C),
-                *(uint32_t *)((uintptr_t)g_xbox_mem_offset + g_esp));
+                "stem %s caller 0x%08X\n", by_input ? "player" : "RECOMP_BLACK_SKIP_MOVIES",
+                movie_va, *(uint32_t *)(movie + 0x4C), movie_skip_identity.stem,
+                black_pc_ram_span(g_esp, 4u) ? GUEST32(g_esp) : 0u);
         fflush(stderr);
+        black_movie_skip_sync(movie_va);
+        fesetenv(&environment);
+        _mm_setcsr(csr);
         g_esp += 4;     /* ret: the pump has no stack arguments */
         return;
     }
+    fesetenv(&environment);
+    _mm_setcsr(csr);
     sub_000C4570_gen();
+    /* Keep EOF/open/decoder replacement separate from a pressed key; ending a
+     * movie naturally never leaves confirmation armed for the next one. */
+    csr = _mm_getcsr();
+    fegetenv(&environment);
+    fesetenv(FE_DFL_ENV);
+    _mm_setcsr(0x1F80u);
+    black_movie_skip_sync(movie_va);
+    fesetenv(&environment);
+    _mm_setcsr(csr);
 }
 
 /* Optional BLACK presentation interval experiment.
@@ -1839,6 +1913,19 @@ static uint32_t black_pc_brand_guest(uint32_t source)
 /* END BLACK_PC_BRANDING_RUNTIME */
 
 #include "black_native_menu.inc"
+
+/* The confirmation hint also works with RECOMP_NATIVE_MENUS=0, and before a
+ * native page has loaded its fonts. The font is copied by the runtime, so the
+ * game's file stays untouched. Retry-free on a missing installation asset. */
+static void black_movie_skip_font(void)
+{
+    static int attempted;
+    if (pc_menu_has_font(PCM_FONT_SMALL)) return;
+    if (!attempted) {
+        attempted = 1;
+        bnm_load_font(PCM_FONT_SMALL, "D:\\language\\fonts\\Small.bin");
+    }
+}
 
 /* BEGIN BLACK_PC_BRANDING_FETCH */
 void sub_001F3A80(void)
