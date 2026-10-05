@@ -1,0 +1,150 @@
+BLACK 2006 Recomp — licensing and attribution
+============================================
+
+Copyright (c) 2026 portingpete.
+
+The original host integration, generator adaptations, launcher, scripts and
+project documentation in this source-only repository are MIT licensed under
+LICENSE, except where a file or component carries a different notice.
+
+The runtime patch modifies xboxrecomp. Its MIT portions retain
+Copyright (c) 2026 sp00nz. The upstream attribution below is preserved verbatim.
+Patches retain each affected file's existing license and copyright; they do
+not relicense third-party code. The xemu-derived APU and Kelvin renderer and
+their derived modifications, including added Kelvin implementation files,
+remain LGPL-2.1-or-later. See LICENSES/LGPL-2.1.txt and the source notices.
+
+The vendored nv2a_vsh_cpu interpreter is by Erik Abair and uses the Unlicense;
+its full text is copied unchanged in LICENSES/nv2a_vsh_cpu.txt. Its disassembler
+header includes Mesa's Brian Paul/VMware permissive notice, copied verbatim
+without C comment prefixes into LICENSES/Mesa.txt. These notices remain in
+the corresponding upstream files and patch additions.
+
+BLACK and its retail game data are the property of their respective owners.
+No permission to distribute game files is granted by these software licenses.
+The generator requires a user's own matching retail original Xbox files.
+Generated game-function bodies, extracted assets, saves and game binaries
+are excluded from this repository.
+
+Preserved xboxrecomp NOTICE
+==========================
+
+xboxrecomp — third-party attribution
+====================================
+
+xboxrecomp is MIT licensed (see LICENSE). The components listed below are
+not, and are included here under their original licences with their original
+copyright intact. They are other people's work and are credited as such.
+
+
+LGPL-2.1-or-later — extracted from xemu
+---------------------------------------
+
+  https://github.com/xemu-project/xemu
+
+  Files, with the copyright each one carries:
+
+    src/apu/apu_core.c    MCPX APU core
+                          (c) 2012 espes; 2018-2019 Jannik Vogel;
+                          2019-2025 Matt Borgerson
+    src/apu/apu_dsp.c     MCPX APU DSP (GP/EP)
+                          (c) 2012 espes; 2019-2025 Matt Borgerson
+    src/apu/apu_vp.c      MCPX APU voice processor
+                          (c) 2012 espes; 2018-2019 Jannik Vogel;
+                          2019-2025 Matt Borgerson
+    src/apu/apu_regs.h    (c) 2012 espes; 2018-2019 Jannik Vogel;
+                          2019-2021 Matt Borgerson
+    src/apu/apu_state.h   (c) 2012 espes; 2018-2019 Jannik Vogel;
+                          2019-2025 Matt Borgerson
+    src/apu/apu_debug.h   (c) 2020-2021 Matt Borgerson
+    src/apu/fpconv.h      (c) 2020-2025 Matt Borgerson
+    src/nv2a/nv2a_regs.h  NV2A register definitions
+                          (c) 2012 espes; 2015 Jannik Vogel
+    src/nv2a/kelvin/      Kelvin, the NV2A 3D engine on the CPU
+                          (c) 2012 espes; 2015 Jannik Vogel;
+                          2018-2025 Matt Borgerson
+        kelvin_pgraph.c   method handlers ported from pgraph/pgraph.c
+                          and pgraph/vertex.c
+        kelvin_int.h      PGRAPH state model from pgraph/pgraph.h
+        kelvin.c          DMA pusher, RAMHT and DMA objects after pfifo.c
+        kelvin_mmio.c     PMC/PCRTC/PGRAPH interrupt registers after
+                          pmc.c, pcrtc.c, pgraph.c and nv2a.c
+        kelvin_render.c   draw path after gl/draw.c, gl/vertex.c,
+          kelvin_render.h glsl/geom.c and gl/blit.c
+        kelvin_texture.c  formats and sampling after gl/constants.h,
+                          pgraph/texture.c and gl/texture.c
+        kelvin_vsh.c      fixed-function transform after glsl/vsh-ff.c
+                          and glsl/vsh.c
+        kelvin_pixel.c    output merger state after gl/draw.c
+        psh_regs.h        (c) 2013 espes, unchanged apart from includes
+
+  src/apu/apu_shim.h is this project's own file but is released under the
+  same licence, because it exists only to host the extracted APU code.
+
+  Licensed under the GNU Lesser General Public License, version 2.1 or (at
+  your option) any later version. The full text is in LICENSES/LGPL-2.1.txt;
+  the canonical copy is
+  https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt
+
+  These files keep their own licence. Linking against them from MIT or
+  proprietary code is expressly permitted by the LGPL — that is what
+  distinguishes it from the GPL. What the LGPL asks in return is that the
+  notices stay, that the source stays available, and that a user can relink
+  against a modified version. Distributing this repository, source included,
+  satisfies that.
+
+
+Derived algorithms — credited, independently implemented
+--------------------------------------------------------
+
+  src/d3d/d3d8_swizzle.h
+    Implements Xbox Z-order (Morton) texture unswizzling. The
+    masked-increment technique is Fabian Giesen's, published on his blog;
+    xemu's hw/xbox/nv2a/pgraph/swizzle.c is cited in the file as the
+    reference that pointed us at it.
+
+  src/d3d/d3d8_combiners.h
+    NV2A register-combiner translation. Cites xemu's pgraph combiner
+    implementation as a reference for the hardware's behaviour.
+
+  src/nv2a/kelvin/kelvin_pixel.c, kelvin_render.c, kelvin_vsh.c
+    The texture-shader and register-combiner arithmetic, the depth value
+    and the handling of a transform program's screen-space output compute
+    what xemu's glsl/psh.c and glsl/vsh-prog.c make the GPU compute. Those
+    two files are GPL-2.0+ and generate GLSL text; the Kelvin files are C
+    evaluators of the same hardware behaviour, written for this project,
+    and contain none of their code. They are listed here, as above, so the
+    reference is visible. src/nv2a/kelvin/kelvin_enums.h holds register
+    encodings written for this project in place of xemu's GPL vsh_regs.h.
+
+  Algorithms and hardware behaviour are not themselves copyrightable, and
+  these are our own implementations. They are listed here because the debt is
+  real and should be visible even where no licence obligation attaches. If
+  anyone believes either file crosses from "implements the same algorithm"
+  into "copies the expression", raise an issue and we will rewrite or
+  relicense it — getting the credit right matters more to us than the licence
+  label.
+
+
+Public domain and permissive -- vendored
+----------------------------------------
+
+  src/nv2a/kelvin/nv2a_vsh_cpu/
+    Erik Abair's CPU interpreter for NV2A transform programs, as xemu
+    vendors it. Released into the public domain (the Unlicense; see
+    nv2a_vsh_cpu/LICENSE). Its disassembler header carries the permissive
+    Mesa notice (c) 1999-2008 Brian Paul, 1999-2009 VMware, kept in the
+    file. One change: fix_inf_mult returns 0 when either factor is 0, the
+    hardware's MUL rule for 0 times infinity.
+
+
+Reference material (no code taken)
+-----------------------------------
+
+  xemu, Cxbx-Reloaded and xboxdevwiki were used as references for hardware
+  behaviour: register offsets, kernel export ordinals, structure layouts.
+  Those are functional facts rather than expression, and no code was copied
+  for them.
+
+
+Contributors to xboxrecomp itself are credited in CONTRIBUTORS.md.

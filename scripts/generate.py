@@ -1,0 +1,457 @@
+#!/usr/bin/env python3
+"""Generate BLACK locally from the user's own supported retail XBE.
+
+No translated game code is included in this repository. This script replays the
+runtime optimizations and title hooks used by the verified PC build.
+"""
+import argparse
+import datetime
+import hashlib
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+EXPECTED_XBE = "DF2739C372D254A90AEECCF5971D12097F22D89FBB90DB021FDA96DD4DEB68F6"
+FUNCTION = re.compile(r"^void (\w+)\(void\)\n\{.*?^\}", re.M | re.S)
+# These late-added wrappers retain the generator's original register model.
+UNPROMOTED = {"xbe_entry_point", "sub_00102840_gen", "sub_00102D90_gen",
+              "sub_000D2F40_gen", "sub_001314E0_gen", "sub_00114030_gen",
+              "sub_0015A960_gen"}
+
+INT_REGS = ['eax', 'ecx', 'edx', 'ebx', 'esi', 'edi', 'esp']
+MM_REGS = ['mm%d' % i for i in range(8)]
+CALL_TOKENS = ['RECOMP_ABI_CALL', 'RECOMP_ICALL_SAFE', 'RECOMP_ICALL', 'RECOMP_ITAIL']
+COMMENT = re.compile(r'(/\*.*?\*/)')
+
+
+def split_code(line):
+    """Alternating [code, comment, code, ...] pieces."""
+    return COMMENT.split(line)
+
+
+def strip_comments(text):
+    return re.sub(r'/\*.*?\*/', '', text, flags=re.S)
+
+
+def matching_paren(s, start):
+    depth = 0
+    for i in range(start, len(s)):
+        if s[i] == '(':
+            depth += 1
+        elif s[i] == ')':
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def promote(lines, name, report):
+    text = '\n'.join(lines)
+    code = strip_comments(text)
+    if re.search(r'__asm|setjmp|longjmp|\bswitch\b', code):
+        report.append((name, 'skipped: unsupported construct'))
+        return lines
+    # direct global register references other than the indirect-call stack snapshot
+    leftover = re.sub(r'uint32_t _icall_esp = g_esp;', '', code)
+    if re.search(r'\bg_(eax|ecx|edx|ebx|esi|edi|esp|mm[0-7])\b', leftover):
+        report.append((name, 'skipped: direct global register use'))
+        return lines
+    used_int = [r for r in INT_REGS if re.search(r'\b%s\b' % r, code)]
+    used_mm = [r for r in MM_REGS if re.search(r'\b%s\b' % r, code)]
+    if 'esp' not in used_int and re.search(r'_icall_esp', code):
+        used_int.append('esp')
+    if not used_int and not used_mm:
+        report.append((name, 'unchanged: no registers'))
+        return lines
+    flush = ' '.join('g_%s = l_%s;' % (r, r) for r in used_int + used_mm)
+    reload = ' '.join('l_%s = g_%s;' % (r, r) for r in used_int + used_mm)
+    reg_re = re.compile(r'\b(%s)\b' % '|'.join(used_int + used_mm))
+    calls = 0
+    rets = 0
+    out = []
+    # the declaration goes after the opening brace
+    brace_index = None
+    for i, line in enumerate(lines):
+        if line == '{':
+            brace_index = i
+            break
+    if brace_index is None:
+        report.append((name, 'skipped: no opening brace'))
+        return lines
+    for i, line in enumerate(lines):
+        if i <= brace_index:
+            out.append(line)
+            if i == brace_index:
+                decl = ' '.join('uint32_t l_%s = g_%s;' % (r, r) for r in used_int)
+                if used_mm:
+                    decl += ' ' + ' '.join('RecompMmx l_%s = g_%s;' % (r, r) for r in used_mm)
+                out.append('    ' + decl)
+            continue
+        pieces = split_code(line)
+        for k in range(0, len(pieces), 2):
+            p = pieces[k]
+            p = p.replace('uint32_t _icall_esp = g_esp;', 'uint32_t _icall_esp = l_esp;')
+            p = reg_re.sub(lambda m: 'l_' + m.group(1), p)
+            # calls: flush before, reload after (the whole call statement goes in its own block)
+            pos = 0
+            while True:
+                found = None
+                for tok in CALL_TOKENS:
+                    j = p.find(tok + '(', pos)
+                    if j >= 0 and (found is None or j < found[0]):
+                        found = (j, tok)
+                if not found:
+                    break
+                j, tok = found
+                end = matching_paren(p, j + len(tok))
+                if end < 0:
+                    report.append((name, 'skipped: unbalanced call'))
+                    return lines
+                semi = end + 1
+                while semi < len(p) and p[semi] == ' ':
+                    semi += 1
+                if semi >= len(p) or p[semi] != ';':
+                    report.append((name, 'skipped: call not followed by a semicolon'))
+                    return lines
+                stmt = p[j:semi + 1]
+                repl = '{ ' + flush + ' ' + stmt + ' ' + reload + ' }'
+                p = p[:j] + repl + p[semi + 1:]
+                pos = j + len(repl)
+                calls += 1
+            # bare direct calls: a tail jump compiles to `g_seh_ebp = ebp; sub_X(); return;`
+            pos = 0
+            while True:
+                m = re.compile(r'\bsub_[0-9A-F]{8}(?:_gen)?\(\);').search(p, pos)
+                if not m:
+                    break
+                repl = '{ ' + flush + ' ' + m.group(0) + ' ' + reload + ' }'
+                p = p[:m.start()] + repl + p[m.end():]
+                pos = m.start() + len(repl)
+                calls += 1
+            if re.search(r'\breturn;', p):
+                n = len(re.findall(r'\breturn;', p))
+                p = re.sub(r'\breturn;', '{ ' + flush + ' return; }', p)
+                rets += n
+            pieces[k] = p
+        out.append(''.join(pieces))
+    report.append((name, 'promoted %s%s; %d calls, %d returns' % (','.join(used_int), (' + ' + ','.join(used_mm)) if used_mm else '', calls, rets)))
+    return out
+
+
+
+BIN = {
+    'PADDD': '_mm_add_epi32', 'PSUBD': '_mm_sub_epi32', 'PADDW': '_mm_add_epi16', 'PSUBW': '_mm_sub_epi16',
+    'PAND': '_mm_and_si128', 'POR': '_mm_or_si128', 'PXOR': '_mm_xor_si128', 'PANDN': '_mm_andnot_si128',
+    'PMADDWD': '_mm_madd_epi16', 'PUNPCKLWD': '_mm_unpacklo_epi16', 'PUNPCKLDQ': '_mm_unpacklo_epi32',
+    'PUNPCKLBW': '_mm_unpacklo_epi8', 'PMULLW': '_mm_mullo_epi16',
+}
+SHIFT = {'PSRLD': '_mm_srli_epi32', 'PSLLD': '_mm_slli_epi32', 'PSRAD': '_mm_srai_epi32',
+         'PSRLW': '_mm_srli_epi16', 'PSLLW': '_mm_slli_epi16', 'PSRAW': '_mm_srai_epi16'}
+MMX_REG = re.compile(r'\b(eax|ecx|edx|ebx|esi|edi|ebp|esp)\b')
+
+
+def mmx_reg(s):
+    return MMX_REG.sub(lambda m: 'r_' + m.group(1), s)
+
+
+def operand(x):
+    x = x.strip()
+    m = re.fullmatch(r'mm([0-7])', x)
+    if m:
+        return 'm%s' % m.group(1)
+    m = re.fullmatch(r'MMX_MEM\((.*)\)', x)
+    if m:
+        return '_mm_loadl_epi64((const __m128i *)(mem + (%s)))' % mmx_reg(m.group(1))
+    raise ValueError('operand ' + x)
+
+
+def translate_mmx(line):
+    s = re.sub(r'/\*.*?\*/', '', line).strip()
+    if not s or s.startswith(('_fa', '_fb', '_cf', 'if ')) or s.endswith(':') or s.startswith('loc_'):
+        return None
+    m = re.fullmatch(r'mm([0-7]) = mm([0-7]);', s)
+    if m:
+        return 'm%s = m%s;' % m.groups()
+    m = re.fullmatch(r'mm([0-7]) = (MMX_MEM\(.*\));', s)
+    if m:
+        return 'm%s = %s;' % (m.group(1), operand(m.group(2)))
+    m = re.fullmatch(r'mm([0-7]) = MMX_FROM32\(MEM32\((.*)\)\);', s)
+    if m:
+        return 'm%s = _mm_cvtsi32_si128(*(const int32_t *)(mem + (%s)));' % (m.group(1), mmx_reg(m.group(2)))
+    m = re.fullmatch(r'mm([0-7]) = MMX_PCMPEQB\(mm([0-7]), mm([0-7])\);', s)
+    if m:
+        return 'm%s = _mm_cmpeq_epi8(m%s, m%s);' % m.groups()
+    m = re.fullmatch(r'mm([0-7]) = MMX_(PSRLD|PSLLD|PSRAD|PSRLW|PSLLW|PSRAW)\(mm([0-7]), (\d+)u\);', s)
+    if m:
+        return 'm%s = %s(m%s, %s);' % (m.group(1), SHIFT[m.group(2)], m.group(3), m.group(4))
+    m = re.fullmatch(r'mm([0-7]) = MMX_(\w+)\(mm([0-7]), (.*)\);', s)
+    if m and m.group(2) in BIN:
+        return 'm%s = %s(m%s, %s);' % (m.group(1), BIN[m.group(2)], m.group(3), operand(m.group(4)))
+    m = re.fullmatch(r'mm([0-7]) = MMX_PACKSSDW\(mm([0-7]), mm([0-7])\);', s)
+    if m:
+        return 'm%s = pack_ssdw(m%s, m%s);' % m.groups()
+    m = re.fullmatch(r'mm([0-7]) = MMX_PACKUSWB\(mm([0-7]), mm([0-7])\);', s)
+    if m:
+        return 'm%s = pack_uswb(m%s, m%s);' % m.groups()
+    m = re.fullmatch(r'mm([0-7]) = MMX_PUNPCKHDQ\(mm([0-7]), mm([0-7])\);', s)
+    if m:
+        return 'm%s = unpackhi_dq(m%s, m%s);' % m.groups()
+    m = re.fullmatch(r'MMX_STORE\((.*), mm([0-7])\);', s)
+    if m:
+        return '_mm_storel_epi64((__m128i *)(mem + (%s)), m%s);' % (mmx_reg(m.group(1)), m.group(2))
+    m = re.fullmatch(r'MEM32\((.*)\) = mm([0-7])\.ud\[0\];', s)
+    if m:
+        return '*(uint32_t *)(mem + (%s)) = (uint32_t)_mm_cvtsi128_si32(m%s);' % (mmx_reg(m.group(1)), m.group(2))
+    m = re.fullmatch(r'(eax|ebx|ecx|edx|esi|edi) = mm([0-7])\.ud\[0\];', s)
+    if m:
+        return 'r_%s = (uint32_t)_mm_cvtsi128_si32(m%s);' % m.groups()
+    m = re.fullmatch(r'MEM16\((.*)\) = LO16\((\w+)\);', s)
+    if m:
+        return '*(uint16_t *)(mem + (%s)) = (uint16_t)%s;' % (mmx_reg(m.group(1)), mmx_reg(m.group(2)))
+    m = re.fullmatch(r'(eax|ebx|ecx|edx|esi|edi) = (.*);', s)
+    if m and 'MMX' not in s and 'MEM' not in s:
+        return 'r_%s = %s;' % (m.group(1), mmx_reg(m.group(2)))
+    m = re.fullmatch(r'(eax|ebx|ecx|edx|esi|edi)\+\+;', s)
+    if m:
+        return 'r_%s++;' % m.group(1)
+    raise ValueError(line)
+
+
+def rewrite_functions(text, transform):
+    return FUNCTION.sub(lambda m: transform(m[1], m[0]), text)
+
+
+def promote_body(name, body):
+    if name in UNPROMOTED:
+        return body
+    promoted = "\n".join(promote(body.split("\n"), name, []))
+    # Preserve the two conditional leaf paths of the validated build.
+    if name in {"sub_002400E0", "sub_00240137"}:
+        promoted = re.sub(r"\{ (?:g_\w+ = l_\w+; )+(sub_[0-9A-F]{8}\(\);) (?:l_\w+ = g_\w+; )+\}", r"\1", promoted)
+    return promoted
+
+
+def repair_sse(text):
+    compares = {"cmpltss": "_mm_cmplt_ss", "cmpnless": "_mm_cmpnle_ss",
+                "cmpeqss": "_mm_cmpeq_ss", "cmpneqss": "_mm_cmpneq_ss",
+                "cmpnltps": "_mm_cmpnlt_ps"}
+    todo = re.compile(r"^(\s*)/\* TODO: (cmp\w+) (xmm\d), (xmm\d|dword ptr \[(?:esp|ebp) [+-] 0x[0-9A-Fa-f]+\]) \*/\s*$")
+    reciprocal = re.compile(r"^(\s*)(xmm\d)\.f\[0\] = 1\.0f / (?:sqrtf\((xmm\d)\.f\[0\]\)|(xmm\d)\.f\[0\]); /\* (rsqrtps|rcpps) \(low lane; 4-lane model TODO\) \*/\s*$")
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        m = todo.match(line)
+        if m:
+            indent, op, dst, src = m.groups()
+            if op not in compares:
+                raise ValueError("Unsupported SSE comparison: " + line)
+            if src.startswith("xmm"):
+                rhs = src + ".m"
+            else:
+                regname, sign, offset = re.fullmatch(r"dword ptr \[(esp|ebp) ([+-]) (0x[0-9A-Fa-f]+)\]", src).groups()
+                nearby = "\n".join(lines[max(0, i - 400):i])
+                base = "l_" + regname if re.search(r"\bl_" + regname + r"\b", nearby) else regname
+                rhs = f"XMM_SCALAR(MEMF({base} {sign} {offset})).m"
+            lines[i] = f"{indent}{dst} = RecompXmmOf({compares[op]}({dst}.m, {rhs})); /* {op} {dst}, {src} (was a TODO) */"
+            continue
+        m = reciprocal.match(line)
+        if m:
+            indent, dst, rsqrt_src, rcp_src, op = m.groups()
+            denominator = f"_mm_sqrt_ps({rsqrt_src}.m)" if rsqrt_src else f"{rcp_src}.m"
+            lines[i] = f"{indent}{dst} = RecompXmmOf(_mm_div_ps(_mm_set1_ps(1.0f), {denominator})); /* {op}, all four lanes */"
+    return "\n".join(lines)
+
+
+def optimize_apu(text):
+    text = text.replace("else { uint32_t _i; for (_i = 0; _i < l_ecx; _i++) MEM32(l_edi + _i*4) = MEM32(l_esi + _i*4); }",
+                        "else { black_copy32_slow(l_edi, l_esi, l_ecx); }")
+    read = re.compile(r"^(\s*)((?:l_[a-z]+|ebp)) = MEM32\((-\d+|0x[0-9A-Fa-f]+u?)\);(.*)$")
+    write = re.compile(r"^(\s*)MEM32\((-\d+|0x[0-9A-Fa-f]+u?)\) = ([^;]*);(.*)$")
+    def address(s):
+        return int(s.rstrip("u"), 0) & 0xffffffff
+    lines = []
+    for line in text.split("\n"):
+        m = read.match(line)
+        if m and 0xFE800000 <= address(m[3]) <= 0xFE87FFFF:
+            line = f"{m[1]}{m[2]} = APU_R32(0x{address(m[3]):08X}u);{m[4]}"
+        else:
+            m = write.match(line)
+            if m and 0xFE800000 <= address(m[2]) <= 0xFE87FFFF and "MEM" not in m[3]:
+                line = f"{m[1]}APU_W32(0x{address(m[2]):08X}u, {m[3]});{m[4]}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def replace_once(text, old, new):
+    if text.count(old) != 1:
+        raise ValueError(f"Expected one hook location, found {text.count(old)}: {old}")
+    return text.replace(old, new, 1)
+
+
+def title_hooks(name, body):
+    # Address metadata selects locations. Original instructions are generated
+    # from the local XBE, rather than stored as copied function bodies here.
+    if name == "sub_0007EA80":
+        lines = body.split("\n")
+        for i in range(len(lines) - 1, -1, -1):
+            if "uint64_t _dividend =" in lines[i]:
+                divide = next(line for line in lines[i:i + 8] if "_dividend /" in line)
+                divisor = re.search(r"_dividend / (?:\(uint32_t\))?(l_\w+)", divide)[1]
+                note = "hand patch, as below" if divisor == "l_edi" else "hand patch: a zero divisor faults the host (a console would have too); keep the value instead"
+                lines.insert(i, f"    if ({divisor} == 0) {divisor} = 1; /* {note} */")
+        body = "\n".join(lines)
+    if name in {"sub_000C8F40", "sub_001CDA30"}:
+        body = body.replace("if ((_fca <= _fcb))", "if (!(_fca > _fcb))")
+    if name == "sub_001DAFF0":
+        body = replace_once(body, "if ((_fca <= _fcb)) goto loc_001DB18D;", "if (!(_fca > _fcb)) goto loc_001DB18D;")
+    if name == "sub_0016EA90":
+        body = replace_once(body, "MEMF(0x295CA8)", "black_osc_factor()")
+    if name == "sub_001BD3F0_gen":
+        body, count = re.subn(r"(xmm[01]\.f\[0\] = xmm[01]\.f\[0\] \* )(MEMF\(l_esi \+ 0xCC\))", r"\1black_ctl_k(\2)", body)
+        if count != 2:
+            raise ValueError("Angular filter hook missing")
+    if name == "sub_001F9130":
+        label = "loc_001F91A5: ;\n"
+        start = body.index(label) + len(label)
+        end = body.index("\n\n", start)
+        body = body[:start] + "    if (!black_idle_yield_skip()) {\n" + body[start:end] + "\n    }" + body[end:]
+    if name == "sub_001EDC90":
+        lines = body.split("\n")
+        first = next(i for i, line in enumerate(lines) if "SET_LO8(l_edx," in line and "0x2020C" in line)
+        second = next(i for i, line in enumerate(lines) if "SET_LO8(l_eax," in line and "0x2020E" in line)
+        line = lines.pop(second)
+        lines.insert(first + 1, line)
+        lines.insert(first + 2, "    { uint8_t lv_ = LO8(l_edx), sg_ = LO8(l_eax); black_level_override(&lv_, &sg_); SET_LO8(l_edx, lv_); SET_LO8(l_eax, sg_); } /* lab hook, RECOMP_BLACK_LEVEL */")
+        body = "\n".join(lines)
+    if name in {"sub_00240683_gen", "sub_00241074"}:
+        location = "002408D8" if name == "sub_00240683_gen" else "002411ED"
+        label = f"loc_{location}: ;\n"
+        start = body.index(label) + len(label)
+        end = body.index("\n", start)
+        line = body[start:end]
+        if "if (_flags /* je: equal / zero */)" not in line:
+            raise ValueError("XMV branch hook missing")
+        line = line.replace("if (_flags /* je: equal / zero */)", "if (_fa == 0)")
+        body = body[:start] + f"    /* Native JE at 0x{location}: both predecessors carry the coefficient sign in _fa. */\n" + line + body[end:]
+    if name == "sub_0026D0C0":
+        line = next(line for line in body.splitlines() if "MEM32(l_eax + 0x100410) = l_ecx;" in line)
+        body = replace_once(body, line, line + "\n    MEM32(l_eax + 0x100410) = l_ecx & ~0x10000u;      /* the flush completes at once */")
+    flips = {"sub_0026A420": [("0026A6D8", "l_eax", "4", "l_edi")],
+             "sub_00276E80": [("00276F6C", "l_edx", "0x1C", "ebp"), ("00276F90", "l_eax", "0x14", "ebp")],
+             "sub_00277020": [("00277106", "l_eax", "4", "ebp")]}
+    for location, register, offset, value in flips.get(name, []):
+        line = f"    MEM32({register} + {offset}) = {value};"
+        start = body.index(f"loc_{location}: ;\n")
+        next_label = re.search(r"^loc_", body[start + 1:], re.M)
+        end = start + 1 + next_label.start() if next_label else len(body)
+        segment = replace_once(body[start:end], line, line + f"\n    black_movie_tag_flip({register} + {offset});")
+        body = body[:start] + segment + body[end:]
+    if name == "sub_001314E0_gen":
+        label = "loc_00132AB7: ;\n"
+        start = body.index(label) + len(label)
+        end = body.index("\n", start)
+        body = body[:end] + "\n    black_pickup_text_ready(g_esi); /* bounded native pickup caption; guest state preserved */" + body[end:]
+    return body
+
+
+def flatten_manual(source):
+    text = source.read_text(encoding="utf-8")
+    for include in re.findall(r'^#include "(black[^"\n]+\.inc)"', text, re.M):
+        path = source.parent / include
+        if path.is_file():
+            text = text.replace(f'#include "{include}"', path.read_text(encoding="utf-8"))
+        elif include == "black_xmv_idct.inc":
+            text = text.replace(f'#include "{include}"', "extern void sub_002420C8_gen(void);")
+        else:
+            raise FileNotFoundError(path)
+    for symbol in re.findall(r"^XMV_PART\((sub_[0-9A-F]{8}),", text, re.M):
+        text += f"\nvoid {symbol}(void) {{}}\n"
+    return text
+
+
+def emit_idct(source, destination):
+    match = next((m for m in FUNCTION.finditer(source) if m[1] == "sub_002420C8_gen"), None)
+    if match is None:
+        raise ValueError("Supported XMV IDCT function was not generated")
+    # The SSE2 kernel is generated from the local translation. No original
+    # instruction sequence is distributed with this generator.
+    body = re.sub(r"\bl_(eax|ecx|edx|ebx|esi|edi|esp|mm[0-7])\b", r"\1", match[0])
+    body = re.sub(r"STK(8|16|32)\(", r"MEM\1(", body)
+    lines = body.splitlines()
+    def loop(lo, hi):
+        start = next(i for i, line in enumerate(lines) if line.startswith(lo + ":"))
+        stop = next(i for i in range(start + 1, len(lines)) if lines[i].startswith(hi + ":"))
+        return "\n".join("        " + translated for line in lines[start:stop]
+                         if (translated := translate_mmx(line)) is not None)
+    loop1 = loop("loc_002420ED", "loc_002422ED")
+    loop2 = loop("loc_002422F8", "loc_0024252C")
+    text = IDCT_PREFIX + loop1 + IDCT_MIDDLE + loop2 + IDCT_SUFFIX
+    if not destination.is_file() or destination.read_text(encoding="utf-8") != text:
+        destination.write_text(text, encoding="utf-8")
+
+
+def command(toolkit, module, arguments):
+    print(f"Running {module}", flush=True)
+    subprocess.run([sys.executable, "-m", module, *map(str, arguments)], cwd=toolkit, check=True)
+
+
+IDCT_PREFIX = '/* Locally generated XMV SSE2 kernel. Do not distribute this generated file. */\n#include <emmintrin.h>\n\nextern void sub_002420C8_gen(void);\nextern __declspec(thread) uint32_t g_ebp;\nextern __declspec(thread) uint32_t g_seh_ebp;\n\nstatic int black_idct_mode = -1;                 /* 0 generated, 1 native, 2 verify */\nstatic unsigned black_idct_verified, black_idct_bad;\n\n/* MMX pack/unpack on the low 64 bits of an SSE register */\nstatic __forceinline __m128i idct_pack_ssdw(__m128i a, __m128i b) { __m128i x = _mm_unpacklo_epi64(a, b); return _mm_packs_epi32(x, x); }\nstatic __forceinline __m128i idct_pack_uswb(__m128i a, __m128i b) { __m128i x = _mm_unpacklo_epi64(a, b); return _mm_packus_epi16(x, x); }\nstatic __forceinline __m128i idct_unpackhi_dq(__m128i a, __m128i b) { return _mm_unpacklo_epi32(_mm_srli_epi64(a, 32), _mm_srli_epi64(b, 32)); }\n#define pack_ssdw idct_pack_ssdw\n#define pack_uswb idct_pack_uswb\n#define unpackhi_dq idct_unpackhi_dq\n\ntypedef struct IdctOut { uint32_t eax, ecx, edx; } IdctOut;\n\n/* sp = guest esp at entry (the return address). Returns the registers the generated code leaves behind. */\nstatic IdctOut idct_native(uint32_t sp)\n{\n    uint8_t *mem = (uint8_t *)(uintptr_t)g_xbox_mem_offset;\n    uint32_t r_ebp = sp - 4;                              /* push ebp; mov ebp, esp */\n    uint32_t arg_dst = GUEST32(sp + 4), arg_stride = GUEST32(sp + 8), arg_coef = GUEST32(sp + 12);\n    uint32_t scratch = (r_ebp - 268) & 0xFFFFFFE0u;\n    uint32_t r_eax = 0, r_ebx = 0, r_ecx, r_edx, r_esi, r_edi;\n    __m128i m0 = _mm_setzero_si128(), m1 = m0, m2 = m0, m3 = m0, m4 = m0, m5 = m0, m6 = m0, m7 = m0;\n    IdctOut out;\n\n    r_esi = arg_coef;\n    r_edi = scratch;\n    for (r_ecx = 0xFFFFFFFCu; (int32_t)r_ecx < 0; ) {\n'
+
+IDCT_MIDDLE = '\n    }\n    r_ecx = 0;\n    r_esi = scratch;\n    r_edi = arg_dst;\n    r_edx = arg_stride;\n    for (;;) {\n'
+
+IDCT_SUFFIX = '\n        if (r_ecx == 8) break;\n    }\n    (void)r_ebx;\n    out.eax = r_eax; out.ecx = r_ecx; out.edx = r_edx;\n    return out;\n}\n\nstatic void idct_run_native(uint32_t sp)\n{\n    IdctOut o = idct_native(sp);\n    g_eax = o.eax; g_ecx = o.ecx; g_edx = o.edx;\n    g_ebp = sp - 4; g_seh_ebp = sp - 4;                   /* the frame the generated code leaves published */\n    g_esp = sp + 16;                                      /* ret 12 */\n}\n\n/* The dispatcher the profile wrapper calls. */\nstatic void idct_dispatch(void)\n{\n    uint32_t sp = g_esp;\n    if (black_idct_mode < 0) {\n        const char *e = getenv("RECOMP_BLACK_NATIVE_IDCT");\n        black_idct_mode = e && !strcmp(e, "verify") ? 2 : (e && *e == \'0\') ? 0 : 1;\n        fprintf(stderr, "[BLACK] XMV inverse DCT: %s\\n",\n                black_idct_mode == 0 ? "generated code" : black_idct_mode == 1 ? "native SSE2" : "native, verified against the generated code");\n    }\n    if (black_idct_mode == 2 && black_idct_verified < 3000) {\n        uint8_t *mem = (uint8_t *)(uintptr_t)g_xbox_mem_offset;\n        uint32_t dst = GUEST32(sp + 4), stride = GUEST32(sp + 8), row;\n        uint8_t before[8][8], mine[8][8];\n        uint32_t s_eax = g_eax, s_ecx = g_ecx, s_edx = g_edx, s_ebp = g_ebp, s_seh = g_seh_ebp, s_esp = g_esp;\n        uint32_t n_eax, n_ecx, n_edx, n_ebp, n_seh, n_esp;\n        int bad = 0;\n        for (row = 0; row < 8; row++) memcpy(before[row], mem + dst + row * stride, 8);\n        idct_run_native(sp);\n        for (row = 0; row < 8; row++) memcpy(mine[row], mem + dst + row * stride, 8);\n        n_eax = g_eax; n_ecx = g_ecx; n_edx = g_edx; n_ebp = g_ebp; n_seh = g_seh_ebp; n_esp = g_esp;\n        for (row = 0; row < 8; row++) memcpy(mem + dst + row * stride, before[row], 8);\n        g_eax = s_eax; g_ecx = s_ecx; g_edx = s_edx; g_ebp = s_ebp; g_seh_ebp = s_seh; g_esp = s_esp;\n        sub_002420C8_gen();\n        for (row = 0; row < 8; row++) if (memcmp(mem + dst + row * stride, mine[row], 8)) bad = 1;\n        if (n_eax != g_eax || n_ecx != g_ecx || n_edx != g_edx || n_ebp != g_ebp || n_seh != g_seh_ebp || n_esp != g_esp) bad |= 2;\n        black_idct_verified++;\n        if (bad) {\n            black_idct_bad++;\n            if (black_idct_bad <= 8)\n                fprintf(stderr, "[BLACK] XMV IDCT verify: %s differ (call %u; eax %08X/%08X ecx %08X/%08X edx %08X/%08X ebp %08X/%08X esp %08X/%08X)\\n",\n                        bad & 1 ? "bytes" : "registers", black_idct_verified, n_eax, g_eax, n_ecx, g_ecx, n_edx, g_edx, n_ebp, g_ebp, n_esp, g_esp);\n        }\n        if (black_idct_verified == 3000 || black_idct_verified == 1)\n            fprintf(stderr, "[BLACK] XMV IDCT verify: %u calls, %u mismatching\\n", black_idct_verified, black_idct_bad);\n        return;\n    }\n    if (black_idct_mode == 0) { sub_002420C8_gen(); return; }\n    idct_run_native(sp);\n}\n'
+
+def main():
+    root = Path(__file__).resolve().parents[1]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--toolkit", type=Path, default=root / "third_party/xboxrecomp")
+    parser.add_argument("--xbe", type=Path, default=root / "game/default.xbe")
+    parser.add_argument("--output", type=Path, default=root / "src/recomp/gen")
+    args = parser.parse_args()
+    toolkit, xbe, output = args.toolkit.resolve(), args.xbe.resolve(), args.output.resolve()
+    if not xbe.is_file():
+        parser.error("Place the supported original Xbox BLACK files in game/ first")
+    if hashlib.sha256(xbe.read_bytes()).hexdigest().upper() != EXPECTED_XBE:
+        parser.error("The XBE does not match the supported retail release")
+    work = root / ".work" / ("generate-" + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ"))
+    work.mkdir(parents=True)
+    analysis = work / "xbe-analysis.json"
+    disasm, identified, abi = work / "disasm", work / "func-id", work / "abi"
+    manual = work / "manual-scan.c"
+    manual.write_text(flatten_manual(root / "src/recomp_manual.c"), encoding="utf-8")
+    command(toolkit, "tools.xbe_parser", [xbe, "--json", analysis])
+    command(toolkit, "tools.disasm", [xbe, "--analysis-json", analysis, "-o", disasm, "--force"])
+    command(toolkit, "tools.func_id", [xbe, "--functions", disasm / "functions.json", "--strings", disasm / "strings.json", "--xrefs", disasm / "xrefs.json", "-o", identified])
+    command(toolkit, "tools.abi_analysis", [xbe, "--disasm-dir", disasm, "--func-id-dir", identified, "--output-dir", abi])
+    generated = work / "gen"
+    command(toolkit, "tools.recomp", [xbe, "--all", "--split", "1000", "--game-name", "BLACK", "--disasm-dir", disasm, "--func-id-dir", identified, "--abi-dir", abi, "--gen-dir", generated, "--exclude-manual", manual, "--output-dir", work / "summary"])
+    chunks = sorted(generated.glob("recomp_[0-9]*.c"))
+    emit_idct("\n".join(path.read_text(encoding="utf-8") for path in chunks), root / "src/black_xmv_idct.inc")
+    declarations = "\nextern float black_osc_factor(void);\nextern float black_ctl_k(float);\nextern void black_movie_tag_flip(uint32_t);\nextern void black_pickup_text_ready(uint32_t);\n"
+    for chunk in chunks:
+        text = chunk.read_text(encoding="utf-8")
+        text = rewrite_functions(text, promote_body)
+        text = repair_sse(text)
+        text = optimize_apu(text)
+        text = rewrite_functions(text, title_hooks)
+        text = replace_once(text, '#include <math.h>\n', '#include <math.h>\n' + declarations)
+        chunk.write_text(text, encoding="utf-8")
+    output.mkdir(parents=True, exist_ok=True)
+    stale = set(output.glob("*.c")) - {output / path.name for path in generated.glob("*.c")}
+    if stale:
+        raise RuntimeError("Unexpected old generated source files; preserve them outside src/recomp/gen before retrying")
+    for path in generated.iterdir():
+        if path.is_file():
+            destination = output / path.name
+            if not destination.is_file() or destination.read_bytes() != path.read_bytes():
+                shutil.copyfile(path, destination)
+    print(f"Generated {len(chunks)} source chunks from your XBE. Local analysis: {work}", flush=True)
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
