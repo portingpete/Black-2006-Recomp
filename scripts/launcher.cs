@@ -92,7 +92,7 @@ namespace BlackXboxLauncher
 
     internal sealed class LaunchOptions
     {
-        public int SettingsVersion = 7;
+        public int SettingsVersion = 8;
         // GpuRenderer draws the game's NV2A graphics on the GPU (Direct3D 11) and presents it directly;
         // off keeps the CPU Kelvin renderer. Smooth60 runs the game's clock at 60 steps per second so
         // 60 presented frames are 60 simulated frames (the original runs at 30).
@@ -115,6 +115,10 @@ namespace BlackXboxLauncher
         public int Anisotropy = 16;
         public string DepthOfField = "off";
         public string Sharpening = "off";
+        // Ambient occlusion uses scene depth for contact shading before the HUD. Quality controls
+        // sampling density and radius; every level keeps the scene resolution and depth-aware blur.
+        public string AoMethod = "off";
+        public string AoQuality = "high";
         public string WindowMode = "windowed";
         public string ScaleMode = "fit";
         public string PresentFilter = "linear";
@@ -194,6 +198,8 @@ namespace BlackXboxLauncher
             text.Append("af=").Append(Anisotropy.ToString(CultureInfo.InvariantCulture)).Append('\n');
             text.Append("dof=").Append(DepthOfField).Append('\n');
             text.Append("sharpen=").Append(Sharpening).Append('\n');
+            text.Append("ao_method=").Append(AoMethod).Append('\n');
+            text.Append("ao_quality=").Append(AoQuality).Append('\n');
             return text.ToString();
         }
 
@@ -258,6 +264,17 @@ namespace BlackXboxLauncher
                     case "sharpen":
                         if (IsOneOf(value.ToLowerInvariant(), "off", "low", "medium", "high")) { Sharpening = value.ToLowerInvariant(); applied++; }
                         break;
+                    case "ao_method":
+                        if (IsOneOf(value.ToLowerInvariant(), "off", "ssao", "hbao", "hbao_plus", "gtao")) { AoMethod = value.ToLowerInvariant(); applied++; }
+                        break;
+                    case "ao_quality":
+                        if (IsOneOf(value.ToLowerInvariant(), "low", "medium", "high", "ultra")) { AoQuality = value.ToLowerInvariant(); applied++; }
+                        break;
+                    case "ssao":
+                        if (value.Equals("off", StringComparison.OrdinalIgnoreCase)) { AoMethod = "off"; applied++; }
+                        else if (IsOneOf(value.ToLowerInvariant(), "low", "medium", "high", "ultra"))
+                        { AoMethod = "ssao"; AoQuality = value.ToLowerInvariant(); applied++; }
+                        break;
                 }
             }
             return applied;
@@ -275,6 +292,8 @@ namespace BlackXboxLauncher
             if (!IsAnisotropy(Anisotropy)) throw new ArgumentOutOfRangeException("Anisotropy");
             if (!IsOneOf(DepthOfField, "off", "low", "medium", "high")) throw new ArgumentException("Invalid DepthOfField.");
             if (!IsOneOf(Sharpening, "off", "low", "medium", "high")) throw new ArgumentException("Invalid Sharpening.");
+            if (!IsOneOf(AoMethod, "off", "ssao", "hbao", "hbao_plus", "gtao")) throw new ArgumentException("Invalid AoMethod.");
+            if (!IsOneOf(AoQuality, "low", "medium", "high", "ultra")) throw new ArgumentException("Invalid AoQuality.");
             if (!IsOneOf(WindowMode, "windowed", "borderless")) throw new ArgumentException("Invalid WindowMode.");
             if (!IsOneOf(ScaleMode, "fit", "stretch", "integer")) throw new ArgumentException("Invalid ScaleMode.");
             if (!IsOneOf(PresentFilter, "nearest", "linear")) throw new ArgumentException("Invalid PresentFilter.");
@@ -325,6 +344,8 @@ namespace BlackXboxLauncher
             if (!IsAnisotropy(settings.Anisotropy)) settings.Anisotropy = defaults.Anisotropy;
             if (!IsOneOf(settings.DepthOfField, "off", "low", "medium", "high")) settings.DepthOfField = defaults.DepthOfField;
             if (!IsOneOf(settings.Sharpening, "off", "low", "medium", "high")) settings.Sharpening = defaults.Sharpening;
+            if (!IsOneOf(settings.AoMethod, "off", "ssao", "hbao", "hbao_plus", "gtao")) settings.AoMethod = defaults.AoMethod;
+            if (!IsOneOf(settings.AoQuality, "low", "medium", "high", "ultra")) settings.AoQuality = defaults.AoQuality;
             if (!IsOneOf(settings.WindowMode, "windowed", "borderless")) settings.WindowMode = defaults.WindowMode;
             if (!IsOneOf(settings.ScaleMode, "fit", "stretch", "integer")) settings.ScaleMode = defaults.ScaleMode;
             if (!IsOneOf(settings.PresentFilter, "nearest", "linear")) settings.PresentFilter = defaults.PresentFilter;
@@ -975,6 +996,8 @@ namespace BlackXboxLauncher
         private readonly ComboBox anisotropy = new ComboBox();
         private readonly ComboBox depthOfField = new ComboBox();
         private readonly ComboBox sharpening = new ComboBox();
+        private readonly ComboBox aoMethod = new ComboBox();
+        private readonly ComboBox aoQuality = new ComboBox();
         private readonly ComboBox windowMode = new ComboBox();
         private readonly ComboBox scaleMode = new ComboBox();
         private readonly ComboBox presentFilter = new ComboBox();
@@ -1110,12 +1133,25 @@ namespace BlackXboxLauncher
             ConfigureChoices(sharpening, "Sharpening", 417, 49, 185,
                 new DisplayChoice("off", "Off"), new DisplayChoice("low", "Low"), new DisplayChoice("medium", "Medium"), new DisplayChoice("high", "High"));
             graphics.Controls.Add(sharpening);
-            AddOptionLabel(graphics, "Effects of the GPU renderer, applied to the picture before the HUD. The game's Video Settings page", 14, 100, 592).ForeColor = muted;
-            AddOptionLabel(graphics, "(Options > V) changes them while playing. Internal resolution is on the Display tab.", 14, 125, 592).ForeColor = muted;
+            AddOptionLabel(graphics, "Ambient occlusion", 14, 90, 120);
+            ConfigureChoices(aoMethod, "Ambient occlusion method", 140, 86, 174,
+                new DisplayChoice("off", "Off"), new DisplayChoice("ssao", "SSAO Classic"), new DisplayChoice("hbao", "HBAO"),
+                new DisplayChoice("hbao_plus", "HBAO+"), new DisplayChoice("gtao", "GTAO"));
+            graphics.Controls.Add(aoMethod);
+            AddOptionLabel(graphics, "AO quality", 327, 90, 90);
+            ConfigureChoices(aoQuality, "Ambient occlusion quality", 417, 86, 185,
+                new DisplayChoice("low", "Low"), new DisplayChoice("medium", "Medium"), new DisplayChoice("high", "High"), new DisplayChoice("ultra", "Ultra"));
+            SelectChoice(aoQuality, new LaunchOptions().AoQuality); graphics.Controls.Add(aoQuality);
+            aoQuality.Enabled = false;
+            aoMethod.SelectedIndexChanged += delegate { aoQuality.Enabled = ChoiceValue(aoMethod) != "off"; };
+            AddOptionLabel(graphics, "Effects of the GPU renderer, applied to the picture before the HUD. The game's Video Settings page", 14, 137, 592).ForeColor = muted;
+            AddOptionLabel(graphics, "(Options > V) changes them while playing. Internal resolution is on the Display tab.", 14, 162, 592).ForeColor = muted;
             settingsTip.SetToolTip(antiAliasing, "FXAA smooths jagged edges at almost no cost. SSAA 4x renders twice as wide and high and averages down: the cleanest and the heaviest. Needs the GPU renderer.");
             settingsTip.SetToolTip(anisotropy, "Keeps textures sharp on floors and walls seen at a slant. Costs almost nothing. Needs the GPU renderer.");
             settingsTip.SetToolTip(depthOfField, "Blurs what is behind the point you are looking at; the weapon and the HUD stay sharp. Needs the GPU renderer.");
             settingsTip.SetToolTip(sharpening, "Brings back fine detail that filtering and scaling soften. Needs the GPU renderer.");
+            settingsTip.SetToolTip(aoMethod, "Ambient occlusion adds contact shading using scene depth. Choose SSAO Classic, HBAO, HBAO+ or GTAO. Needs the GPU renderer.");
+            settingsTip.SetToolTip(aoQuality, "Higher quality increases AO sampling density and radius, with more GPU work. All levels use scene resolution and depth-aware blur. Choose an AO method to enable the effect.");
             AddOptionLabel(input, "Devices", 14, 16, 95);
             ConfigureChoices(inputMode, "Input devices", 114, 12, 200,
                 new DisplayChoice("auto", "Keyboard, mouse, pad"), new DisplayChoice("keyboard_mouse", "Keyboard and mouse only"), new DisplayChoice("controller", "Controller only")); input.Controls.Add(inputMode);
@@ -1287,6 +1323,7 @@ namespace BlackXboxLauncher
             if (!originalFov.Checked) verticalFov.Value = (decimal)settings.VerticalFov;
             SelectChoice(antiAliasing, settings.AntiAliasing); SelectChoice(anisotropy, settings.Anisotropy.ToString(CultureInfo.InvariantCulture));
             SelectChoice(depthOfField, settings.DepthOfField); SelectChoice(sharpening, settings.Sharpening);
+            SelectChoice(aoMethod, settings.AoMethod); SelectChoice(aoQuality, settings.AoQuality);
         }
         private void ReloadVideo()
         {
@@ -1331,6 +1368,7 @@ namespace BlackXboxLauncher
                 InternalHeight = int.Parse(ChoiceValue(internalResolution), CultureInfo.InvariantCulture),
                 AntiAliasing = ChoiceValue(antiAliasing), Anisotropy = int.Parse(ChoiceValue(anisotropy), CultureInfo.InvariantCulture),
                 DepthOfField = ChoiceValue(depthOfField), Sharpening = ChoiceValue(sharpening),
+                AoMethod = ChoiceValue(aoMethod), AoQuality = ChoiceValue(aoQuality),
                 WindowMode = ChoiceValue(windowMode), ScaleMode = ChoiceValue(scaleMode), PresentFilter = ChoiceValue(presentFilter),
                 VSync = vsync.Checked, FpsLimit = int.Parse(ChoiceValue(fpsLimit), CultureInfo.InvariantCulture),
                 CameraAspect = ChoiceValue(cameraAspect), MotionBlur = ChoiceValue(motionBlur),

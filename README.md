@@ -12,6 +12,16 @@ holding a button cannot confirm. The hint also works with native menus disabled
 and stays at the window corner on ultrawide displays. Looping menu backgrounds
 keep playing normally. See the [movie skip tests](tests/movie_skip/README.md).
 
+Ambient occlusion adds contact shading from scene depth with **SSAO Classic,
+HBAO, HBAO+, and GTAO**, each with Low, Medium, High, and Ultra quality. Choose
+the method and quality on the launcher's **Graphics** tab or the in-game
+**Video Settings > Graphics** page. AO defaults to **Off**, with **High** quality
+selected for when it is enabled. The controls and help text are in English.
+These are local implementations of the techniques; HBAO+ does not use the
+vendor SDK. The [AO regression tests](tests/ambient_occlusion/README.md) exercise
+the actual shaders, settings, launcher controls, and native camera hook without
+game files.
+
 Launch through the first mission has been tested, including the opening movies,
 mission briefing, movement, shooting, and reloading with audio. This is still a
 work in progress: later missions are unverified, crashes and rendering issues
@@ -62,6 +72,22 @@ Leave **Skip movies** and **Advance startup menus automatically** unchecked to
 watch the full opening and navigate manually. Local settings live in `local/`,
 saves in `save/`, and diagnostic logs in `reports/`. Close the game before
 removing the project folder; retain `save/` if you want to keep your progress.
+
+AO requires the GPU renderer. Every quality uses a full-resolution R8 mask and
+depth-aware blur; higher quality increases sampling density and radius. AO
+multiplies scene color before depth of field, FXAA, sharpening, and the HUD.
+It uses the world camera's current half-frustum, captured with each queued draw
+so asynchronous rendering keeps the correct camera. Missing camera data or an
+incompatible depth surface bypasses the effect. Depth reconstruction uses a
+calibrated approximation, and HUD separation follows the existing depth-state
+heuristic. First-mission HBAO+ High and AO Off were checked in gameplay; later
+missions remain unverified.
+
+Saved video settings use `ao_method=off|ssao|hbao|hbao_plus|gtao` and
+`ao_quality=low|medium|high|ultra`. `RECOMP_AO_METHOD` and `RECOMP_AO_QUALITY`
+override and lock their respective controls for that run. Legacy `ssao` and
+`RECOMP_SSAO` settings remain supported. Untouched older default menu layouts
+upgrade to include both AO controls; customized layouts are preserved.
 
 ## Credits and licensing
 
