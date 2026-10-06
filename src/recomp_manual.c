@@ -657,6 +657,50 @@ void sub_0015A960(void)
  */
 extern void sub_000D2F40_gen(void);
 extern void kgpu_set_viewmodel(const uint32_t *vs_hashes, int count, float scale);
+extern void kgpu_set_ao_camera(float half_x, float half_y);
+
+/* BEGIN BLACK_AO_CAMERA
+ * D2F40 has just produced the actual half-frustum at +48/+4C. Publish only
+ * the primary world camera, including native aim zoom and scripted lenses.
+ * The renderer consumes a coherent pair; UI and offscreen cameras cannot
+ * overwrite it. Preserve the native producer's returned FP environment.
+ */
+static void black_ao_camera_publish(uint32_t camera)
+{
+    fenv_t environment;
+    unsigned csr;
+    uint32_t renderer, hx_bits, hy_bits;
+    float hx, hy;
+    static int trace = -1, trace_count;
+    if (!black_pc_ram_span(0x002D67F4u, 4u)) return;
+    renderer = GUEST32(0x002D67F4u);
+    if (!black_pc_ram_span(renderer, 0xD4F0u) ||
+        camera != renderer + 0xD450u) return;
+    hx_bits = GUEST32(camera + 0x48u);
+    hy_bits = GUEST32(camera + 0x4Cu);
+    /* Reject invalid float encodings before any host arithmetic. */
+    if (!hx_bits || hx_bits >= 0x7F800000u ||
+        !hy_bits || hy_bits >= 0x7F800000u) hx_bits = hy_bits = 0u;
+    csr = _mm_getcsr();
+    fegetenv(&environment);
+    fesetenv(FE_DFL_ENV);
+    _mm_setcsr(0x1F80u);
+    memcpy(&hx, &hx_bits, sizeof(hx));
+    memcpy(&hy, &hy_bits, sizeof(hy));
+    kgpu_set_ao_camera(hx, hy);
+    if (trace < 0) {
+        const char *e = getenv("RECOMP_AO_CAMERA_TRACE");
+        trace = e && *e && *e != '0';
+    }
+    if (trace && trace_count < 8) {
+        fprintf(stderr, "[BLACK] AO camera=%08X halfX=%.6f halfY=%.6f\n",
+                camera, (double)hx, (double)hy);
+        ++trace_count;
+    }
+    fesetenv(&environment);
+    _mm_setcsr(csr);
+}
+/* END BLACK_AO_CAMERA */
 
 /* The first-person arms and weapon go through the world camera. The models only exist for the original 4:3 frame (the
  * artists left out what that frame cut off), so a custom FOV, which shows more of them and smaller, tears them open. The
@@ -767,6 +811,7 @@ void sub_000D2F40(void)
     if (adjusted) { GUEST32(camera + 0x70u) = new_window; black_viewmodel_scale(saved_window, new_window); }
     sub_000D2F40_gen();
     if (adjusted) GUEST32(camera + 0x70u) = saved_window;
+    black_ao_camera_publish(camera);
 }
 /* END BLACK_PC_FOV */
 

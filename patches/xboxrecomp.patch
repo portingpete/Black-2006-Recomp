@@ -6598,10 +6598,10 @@ index 0000000..bb5c93b
 +#endif
 diff --git a/src/nv2a/kelvin/kelvin_gpu.c b/src/nv2a/kelvin/kelvin_gpu.c
 new file mode 100644
-index 0000000..18879bb
+index 0000000..d7ceca6
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu.c
-@@ -0,0 +1,2184 @@
+@@ -0,0 +1,2214 @@
 +/*
 + * Kelvin D3D11 backend. See kelvin_gpu.h.
 + *
@@ -6662,6 +6662,36 @@ index 0000000..18879bb
 +static volatile uint32_t s_vm_hash[8];
 +static volatile int s_vm_count;
 +static volatile float s_vm_scale = 1.0f;
++
++/* The camera hook runs on the title thread while the GPU consumes the pair.
++ * Publish both frustum dimensions together, including when aim/FOV changes. */
++static volatile LONG64 s_ao_camera;
++static uint64_t s_ao_draw_camera; /* GPU-owned camera snapshot of the draw currently being consumed */
++
++void kgpu_set_ao_camera(float half_x, float half_y)
++{
++    union { float half[2]; LONG64 bits; } camera;
++    if (!(half_x > 0.001f && half_x < 100.0f && half_y > 0.001f && half_y < 100.0f)) {
++        InterlockedExchange64(&s_ao_camera, 0);
++        return;
++    }
++    camera.half[0] = half_x; camera.half[1] = half_y;
++    InterlockedExchange64(&s_ao_camera, camera.bits);
++}
++
++static uint64_t kg_ao_camera_bits(void)
++{
++    return (uint64_t)InterlockedCompareExchange64(&s_ao_camera, 0, 0);
++}
++
++static bool kg_ao_camera(uint64_t bits, float *half_x, float *half_y)
++{
++    union { float half[2]; LONG64 bits; } camera;
++    camera.bits = (LONG64)bits;
++    if (!camera.bits) return false;
++    *half_x = camera.half[0]; *half_y = camera.half[1];
++    return true;
++}
 +
 +void kgpu_set_viewmodel(const uint32_t *vs_hashes, int count, float scale)
 +{
@@ -8788,10 +8818,10 @@ index 0000000..18879bb
 +#include "kelvin_gpu_async.inc"
 diff --git a/src/nv2a/kelvin/kelvin_gpu.h b/src/nv2a/kelvin/kelvin_gpu.h
 new file mode 100644
-index 0000000..815678b
+index 0000000..662239e
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu.h
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,131 @@
 +/*
 + * Kelvin D3D11 backend: rasterization, pixel shading and output merging of
 + * the NV2A on the host GPU, for BLACK's draw subset.
@@ -8802,7 +8832,8 @@ index 0000000..815678b
 + * (KPixelState) and the bound target, and draws them. Surfaces live on the GPU
 + * at the requested host resolution; guest memory is not mirrored.
 + *
-+ * All entry points are called from the Kelvin GPU thread only.
++ * Rendering entry points belong to the Kelvin GPU thread. The camera and
++ * viewmodel publication functions below may be called by the title thread.
 + */
 +#ifndef XBOX_NV2A_KELVIN_GPU_H
 +#define XBOX_NV2A_KELVIN_GPU_H
@@ -8895,6 +8926,11 @@ index 0000000..815678b
 + * the one the first-person model was made for). Pass count 0 to clear. */
 +void kgpu_set_viewmodel(const uint32_t *vs_hashes, int count, float scale);
 +
++/* AO position reconstruction: publish the real camera's horizontal/vertical
++ * half-frustum after aspect, aim zoom and optional PC FOV. Invalid input disables
++ * AO until a valid camera arrives. Safe on the title thread. */
++void kgpu_set_ao_camera(float half_x, float half_y);
++
 +/* RECOMP_KGPU_COMPARE=N: draw every frame with both renderers and compare the
 + * finished frame every N flips (640x480 host size only); the CPU frame is shown. */
 +bool kgpu_compare_enabled(void);
@@ -8919,10 +8955,10 @@ index 0000000..815678b
 +#endif
 diff --git a/src/nv2a/kelvin/kelvin_gpu_async.inc b/src/nv2a/kelvin/kelvin_gpu_async.inc
 new file mode 100644
-index 0000000..01ac263
+index 0000000..d00641c
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu_async.inc
-@@ -0,0 +1,578 @@
+@@ -0,0 +1,583 @@
 +/* Asynchronous submission, included by kelvin_gpu.c after the draw, clear and flip it hands over.
 + *
 + * The pusher thread (A) parses the pushbuffer and works out each draw; the Direct3D work of drawing it -- the textures,
@@ -8961,6 +8997,7 @@ index 0000000..01ac263
 +typedef struct KgDraw {
 +    uint32_t flags, icount;
 +    uint64_t epoch;
++    uint64_t ao_camera;             /* title camera sampled with this submission, independent of later title frames */
 +    int32_t cull_enable, cull_ctrl, ccw_front, topology;
 +    float zbias, zslope;
 +    uint32_t vcount, stride, inl_bytes, index_limit;
@@ -9202,7 +9239,8 @@ index 0000000..01ac263
 +    const uint8_t *inl_lo = NULL, *inl_hi = NULL;
 +    int a;
 +    uint64_t words;
-+    if (!kgq_enabled()) { kgpu_draw_now(d); return; }
++    const uint64_t ao_camera = kg_ao_camera_bits();
++    if (!kgq_enabled()) { s_ao_draw_camera = ao_camera; kgpu_draw_now(d); return; }
 +    if (!G.ok || !d->icount || (!d->gvs && !d->vcount)) return;
 +    if (!a_has_t || memcmp(&a_t, d->t, sizeof(a_t)) != 0) flags |= KGD_T;
 +    if (!a_has_ps || memcmp(&a_ps, d->ps, sizeof(a_ps)) != 0) flags |= KGD_PS;
@@ -9231,6 +9269,7 @@ index 0000000..01ac263
 +        /* too large for the ring: everything before it finishes, then it runs here */
 +        kgpu_drain();
 +        G.epoch = s_kick_epoch;
++        s_ao_draw_camera = ao_camera;
 +        kgpu_draw_now(d);
 +        kg_cache_invalidate();           /* it ran with its own state: what the next queued draw leaves unchanged is not that */
 +        return;
@@ -9247,6 +9286,7 @@ index 0000000..01ac263
 +    ((KgHdr *)p)->size = (uint32_t)size; ((KgHdr *)p)->kind = KGQ_DRAW; ((KgHdr *)p)->pad = 0;
 +    k = (KgDraw *)(p + sizeof(KgHdr));
 +    k->flags = flags; k->icount = d->icount; k->epoch = s_kick_epoch;
++    k->ao_camera = ao_camera;
 +    k->cull_enable = d->cull_enable ? 1 : 0; k->cull_ctrl = d->cull_ctrl; k->ccw_front = d->ccw_front ? 1 : 0;
 +    k->topology = (int32_t)d->topology;
 +    k->zbias = d->zbias; k->zslope = d->zslope;
@@ -9396,6 +9436,7 @@ index 0000000..01ac263
 +                }
 +            }
 +            G.epoch = k->epoch;
++            s_ao_draw_camera = k->ao_camera;
 +            kgpu_draw_now(&d);
 +            draws++;
 +            break;
@@ -10782,15 +10823,15 @@ index 0000000..345e83c
 +}
 diff --git a/src/nv2a/kelvin/kelvin_gpu_post.inc b/src/nv2a/kelvin/kelvin_gpu_post.inc
 new file mode 100644
-index 0000000..cfd3fd4
+index 0000000..54ecd44
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu_post.inc
-@@ -0,0 +1,430 @@
+@@ -0,0 +1,765 @@
 +/* Picture effects of the GPU renderer, included by kelvin_gpu.c after the surface and pass helpers.
 + *
 + * What the player chooses in the Video Settings page (pc_video.c) that the renderer does itself:
 + *
-+ *   - depth of field, FXAA and sharpening run once per frame on the finished scene, just before the HUD. BLACK draws the
++ *   - ambient occlusion, depth of field, FXAA and sharpening run once per frame on the finished scene, just before the HUD. BLACK draws the
 + *     HUD and menus last, with the depth test set to ALWAYS and no depth writes, on the same full-screen target as the
 + *     world; the first such draw after the world is where the effects run, so the HUD stays sharp. A frame with no HUD
 + *     runs them at the flip instead. Each effect copies the colour target and draws back into it.
@@ -10804,9 +10845,9 @@ index 0000000..cfd3fd4
 +static const char kgpu_hlsl_post[] =
 +"cbuffer PostCB : register(b0) {\n"
 +"    float4 p0;   // x,y: 1 / scene size; z,w: scene size in pixels\n"
-+"    float4 p1;   // x: largest blur radius (pixels); y: taps; z: focus smoothing; w: blur per unit of depth\n"
-+"    float4 p2;   // x: depth of the in-focus zone; y: blur of what is in front of the focus; z: sharpening\n"
-+"    float4 p3;   // x,y: size of the target in pixels; z,w: 1 / that\n"
++"    float4 p1;   // DOF: radius/taps/smoothing/depth scale; AO: radius/directions/steps/strength\n"
++"    float4 p2;   // DOF: focus zone/near blur/sharpening; AO: bias/range/detail blend\n"
++"    float4 p3;   // Resolve: target size/reciprocal; AO: real camera half-frustum in x,y\n"
 +"};\n"
 +"Texture2D<float4> SceneTex : register(t0);\n"
 +"Texture2D<float>  CocTex   : register(t1);\n"
@@ -10914,6 +10955,137 @@ index 0000000..cfd3fd4
 +"    float4 s = SceneTex.SampleLevel(LinSmp, uv + float2(-o.x, -o.y), 0) + SceneTex.SampleLevel(LinSmp, uv + float2(o.x, -o.y), 0) +\n"
 +"               SceneTex.SampleLevel(LinSmp, uv + float2(-o.x,  o.y), 0) + SceneTex.SampleLevel(LinSmp, uv + float2(o.x,  o.y), 0);\n"
 +"    return s * 0.25;\n"
++"}\n"
++"// AO uses p1=(pixel radius, directions/taps, steps, strength), p2=(bias, depth range, detail blend, 0),\n"
++"// and p3.xy=the real camera half-frustum. All methods share depth/normal reconstruction, not their kernels.\n"
++"float ao_hash(float2 p) { return frac(52.9829189 * frac(dot(p, float2(0.06711056, 0.00583715)))); }\n"
++"float ao_depth(float2 uv) { return DepthTex.SampleLevel(PtSmp, uv, 0); }\n"
++"float ao_view_z(float d) { return min(4096.0, d / max(0.00010, 1.0 - d)); }\n"
++"float3 ao_pos(float2 uv) {\n"
++"    float z = ao_view_z(ao_depth(uv));\n"
++"    float2 n = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);\n"
++"    return float3(n * p3.xy * z, z);\n"
++"}\n"
++"float3 ao_normal(float2 uv, float3 c) {\n"
++"    float3 l = ao_pos(uv - float2(p0.x, 0)), r = ao_pos(uv + float2(p0.x, 0));\n"
++"    float3 u = ao_pos(uv - float2(0, p0.y)), d = ao_pos(uv + float2(0, p0.y));\n"
++"    // Choose the derivative on the same surface at depth discontinuities.\n"
++"    float3 dx = abs(r.z - c.z) < abs(l.z - c.z) ? r - c : c - l;\n"
++"    float3 dy = abs(u.z - c.z) < abs(d.z - c.z) ? u - c : c - d;\n"
++"    float3 n = cross(dx, dy);\n"
++"    float n2 = dot(n, n);\n"
++"    if (n2 < 1e-12) return float3(0, 0, -1);\n"
++"    n *= rsqrt(n2);\n"
++"    return dot(n, c) > 0 ? -n : n;\n"
++"}\n"
++"float ao_range(float3 c, float3 q) {\n"
++"    return saturate(1.0 - length(q - c) / max(0.01, c.z * p2.y));\n"
++"}\n"
++"float ao_visibility_sample(float2 uv, float3 c, float3 n) {\n"
++"    if (any(uv < 0) || any(uv > 1) || ao_depth(uv) >= 0.99999) return 0.0;\n"
++"    float3 q = ao_pos(uv), v = q - c;\n"
++"    float v2 = dot(v, v);\n"
++"    if (v2 < 1e-12) return 0.0;\n"
++"    return saturate(dot(n, v * rsqrt(v2)) - p2.x) * ao_range(c, q);\n"
++"}\n"
++"float ao_ssao_ps(float4 p : SV_Position) : SV_Target {\n"
++"    float2 uv = p.xy * p0.xy;\n"
++"    if (ao_depth(uv) >= 0.99999) return 1.0;\n"
++"    float3 c = ao_pos(uv), n = ao_normal(uv, c);\n"
++"    float rot = ao_hash(p.xy) * 6.2831853, occ = 0.0;\n"
++"    int taps = (int)p1.y;\n"
++"    // Independent radial samples, with no horizon search.\n"
++"    [loop] for (int i = 0; i < taps; i++) {\n"
++"        float a = i * 2.39996323 + rot;\n"
++"        float r = sqrt((i + 0.5) / taps) * p1.x;\n"
++"        occ += ao_visibility_sample(uv + float2(cos(a), sin(a)) * r * p0.xy, c, n);\n"
++"    }\n"
++"    return saturate(1.0 - p1.w * occ / taps);\n"
++"}\n"
++"float ao_hbao_ps(float4 p : SV_Position) : SV_Target {\n"
++"    float2 uv = p.xy * p0.xy;\n"
++"    if (ao_depth(uv) >= 0.99999) return 1.0;\n"
++"    float3 c = ao_pos(uv), n = ao_normal(uv, c);\n"
++"    float rot = ao_hash(p.xy) * 6.2831853, occ = 0.0;\n"
++"    int dirs = (int)p1.y, steps = (int)p1.z;\n"
++"    // Walk out along each ray and integrate its largest occluding horizon.\n"
++"    [loop] for (int i = 0; i < dirs; i++) {\n"
++"        float a = rot + i * 6.2831853 / dirs;\n"
++"        float2 dir = float2(cos(a), sin(a));\n"
++"        float horizon = 0.0;\n"
++"        [loop] for (int j = 0; j < steps; j++) {\n"
++"            float r = (j + 1.0) * p1.x / steps;\n"
++"            horizon = max(horizon, ao_visibility_sample(uv + dir * r * p0.xy, c, n));\n"
++"        }\n"
++"        occ += horizon;\n"
++"    }\n"
++"    return saturate(1.0 - p1.w * occ / dirs);\n"
++"}\n"
++"float ao_hbaop_ps(float4 p : SV_Position) : SV_Target {\n"
++"    float2 uv = p.xy * p0.xy;\n"
++"    if (ao_depth(uv) >= 0.99999) return 1.0;\n"
++"    float3 c = ao_pos(uv), n = ao_normal(uv, c);\n"
++"    // Interleaved 4x4 rotation, nonlinear radial sampling, and a separate near-detail term.\n"
++"    int2 cell = (int2)p.xy & 3;\n"
++"    float rot = (cell.x + cell.y * 4 + 0.5) * (6.2831853 / 16.0), occ = 0.0;\n"
++"    int dirs = (int)p1.y, steps = (int)p1.z;\n"
++"    [loop] for (int i = 0; i < dirs; i++) {\n"
++"        float a = rot + i * 6.2831853 / dirs;\n"
++"        float2 dir = float2(cos(a), sin(a));\n"
++"        float horizon = 0.0;\n"
++"        [loop] for (int j = 0; j < steps; j++) {\n"
++"            float r = sqrt((j + 0.5) / steps) * p1.x;\n"
++"            horizon = max(horizon, ao_visibility_sample(uv + dir * r * p0.xy, c, n));\n"
++"        }\n"
++"        occ += horizon;\n"
++"    }\n"
++"    float detail = ao_visibility_sample(uv + float2(2, 0) * p0.xy, c, n)\n"
++"                 + ao_visibility_sample(uv - float2(2, 0) * p0.xy, c, n)\n"
++"                 + ao_visibility_sample(uv + float2(0, 2) * p0.xy, c, n)\n"
++"                 + ao_visibility_sample(uv - float2(0, 2) * p0.xy, c, n);\n"
++"    return saturate(1.0 - p1.w * lerp(occ / dirs, detail * 0.25, p2.z));\n"
++"}\n"
++"float ao_gtao_ps(float4 p : SV_Position) : SV_Target {\n"
++"    float2 uv = p.xy * p0.xy;\n"
++"    if (ao_depth(uv) >= 0.99999) return 1.0;\n"
++"    float3 c = ao_pos(uv), n = ao_normal(uv, c);\n"
++"    float rot = ao_hash(p.xy) * 3.14159265, occ = 0.0;\n"
++"    int dirs = (int)p1.y, steps = (int)p1.z;\n"
++"    // Approximate slice/horizon integration in both directions of each slice.\n"
++"    [loop] for (int i = 0; i < dirs; i++) {\n"
++"        float a = rot + i * 3.14159265 / dirs;\n"
++"        float2 dir = float2(cos(a), sin(a));\n"
++"        float hp = 0.0, hn = 0.0;\n"
++"        [loop] for (int j = 0; j < steps; j++) {\n"
++"            float r = (j + 0.75) * p1.x / steps;\n"
++"            float2 offset = dir * r * p0.xy;\n"
++"            hp = max(hp, ao_visibility_sample(uv + offset, c, n));\n"
++"            hn = max(hn, ao_visibility_sample(uv - offset, c, n));\n"
++"        }\n"
++"        // Each horizon is sin(elevation); 1-cos(elevation) is its angular integral.\n"
++"        occ += (2.0 - sqrt(saturate(1.0 - hp * hp)) - sqrt(saturate(1.0 - hn * hn))) * 0.5;\n"
++"    }\n"
++"    return saturate(1.0 - p1.w * occ / dirs);\n"
++"}\n"
++"float ao_blur(float4 p, float2 axis) {\n"
++"    float2 uv = p.xy * p0.xy;\n"
++"    if (ao_depth(uv) >= 0.99999) return 1.0;\n"
++"    float z = ao_view_z(ao_depth(uv)), sum = 0.0, wsum = 0.0;\n"
++"    [unroll] for (int i = -2; i <= 2; i++) {\n"
++"        float2 q = uv + axis * i * p0.xy;\n"
++"        float dz = abs(ao_view_z(ao_depth(q)) - z);\n"
++"        float w = exp(-0.5 * i * i) * exp(-dz / max(0.001, z * 0.02));\n"
++"        sum += CocTex.SampleLevel(PtSmp, q, 0) * w;\n"
++"        wsum += w;\n"
++"    }\n"
++"    return sum / max(wsum, 1e-6);\n"
++"}\n"
++"float ao_blur_h_ps(float4 p : SV_Position) : SV_Target { return ao_blur(p, float2(1, 0)); }\n"
++"float ao_blur_v_ps(float4 p : SV_Position) : SV_Target { return ao_blur(p, float2(0, 1)); }\n"
++"float4 ao_composite_ps(float4 p : SV_Position) : SV_Target {\n"
++"    float2 uv = p.xy * p0.xy;\n"
++"    float4 c = SceneTex.SampleLevel(PtSmp, uv, 0);\n"
++"    return float4(c.rgb * CocTex.SampleLevel(PtSmp, uv, 0), c.a);\n"
 +"}\n";
 +
 +typedef struct KgPostCb { float p0[4], p1[4], p2[4], p3[4]; } KgPostCb;
@@ -10921,12 +11093,18 @@ index 0000000..cfd3fd4
 +static struct {
 +    bool tried, ok;
 +    ID3D11PixelShader *ps_focus, *ps_coc, *ps_dof, *ps_fxaa, *ps_sharp, *ps_ssaa;
++    bool ao_tried, ao_ok;
++    ID3D11PixelShader *ps_ao_ssao, *ps_ao_hbao, *ps_ao_hbaop, *ps_ao_gtao;
++    ID3D11PixelShader *ps_ao_blur_h, *ps_ao_blur_v, *ps_ao_comp;
 +    ID3D11Buffer *cb;
 +    ID3D11SamplerState *smp_lin, *smp_pt;
 +    unsigned int w, h;                                      /* size of the scene copy and the blur map */
 +    ID3D11Texture2D *copy, *coc;
 +    ID3D11ShaderResourceView *copy_srv, *coc_srv;
 +    ID3D11RenderTargetView *coc_rtv;
++    ID3D11Texture2D *ao[2];                                /* full-resolution visibility mask and blur scratch */
++    ID3D11ShaderResourceView *ao_srv[2];
++    ID3D11RenderTargetView *ao_rtv[2];
 +    ID3D11Texture2D *focus[2];
 +    ID3D11ShaderResourceView *focus_srv[2];
 +    ID3D11RenderTargetView *focus_rtv[2];
@@ -10938,13 +11116,17 @@ index 0000000..cfd3fd4
 +    /* the settings in force (pc_video.c), read when its generation changes */
 +    unsigned int gen;
 +    bool cfg;
-+    int aa, dof, sharpen;
++    int aa, dof, sharpen, ao_method, ao_quality;
 +    bool scene_fx;                                          /* any effect that runs on the scene */
 +    /* this frame */
 +    unsigned int world;                                     /* depth-writing draws on the main target */
++    uint64_t ao_camera;                                     /* first world draw's queued camera, fixed for this frame */
 +    bool done;
 +    long long last_qpc;
 +    int depth_stats;                                        /* RECOMP_KGPU_DEPTH_STATS=n: depth percentiles every n frames */
++    char ao_dump[MAX_PATH], ao_scene_prefix[MAX_PATH];
++    uint64_t ao_dump_frame, ao_scene_frame;
++    bool ao_dump_done, ao_scene_done, post_trace, ao_skip_traced;
 +} s_post;
 +
 +static void kg_post_free(void)
@@ -10952,6 +11134,7 @@ index 0000000..cfd3fd4
 +    unsigned int i;
 +    SAFE_RELEASE(s_post.copy_srv); SAFE_RELEASE(s_post.copy);
 +    SAFE_RELEASE(s_post.coc_srv); SAFE_RELEASE(s_post.coc_rtv); SAFE_RELEASE(s_post.coc);
++    for (i = 0; i < 2; i++) { SAFE_RELEASE(s_post.ao_srv[i]); SAFE_RELEASE(s_post.ao_rtv[i]); SAFE_RELEASE(s_post.ao[i]); }
 +    for (i = 0; i < 2; i++) { SAFE_RELEASE(s_post.focus_srv[i]); SAFE_RELEASE(s_post.focus_rtv[i]); SAFE_RELEASE(s_post.focus[i]); }
 +    SAFE_RELEASE(s_post.ss_srv); SAFE_RELEASE(s_post.ss_rtv); SAFE_RELEASE(s_post.ss);
 +    s_post.w = s_post.h = s_post.ss_w = s_post.ss_h = 0;
@@ -10990,6 +11173,21 @@ index 0000000..cfd3fd4
 +    return true;
 +}
 +
++/* AO has independent shader availability, so a failed AO compile cannot disable the other picture effects. */
++static bool post_ao_init(void)
++{
++    if (s_post.ao_tried) return s_post.ao_ok;
++    s_post.ao_tried = true;
++    s_post.ps_ao_ssao = post_shader("ao_ssao_ps"); s_post.ps_ao_hbao = post_shader("ao_hbao_ps");
++    s_post.ps_ao_hbaop = post_shader("ao_hbaop_ps"); s_post.ps_ao_gtao = post_shader("ao_gtao_ps");
++    s_post.ps_ao_blur_h = post_shader("ao_blur_h_ps"); s_post.ps_ao_blur_v = post_shader("ao_blur_v_ps");
++    s_post.ps_ao_comp = post_shader("ao_composite_ps");
++    s_post.ao_ok = s_post.ps_ao_ssao && s_post.ps_ao_hbao && s_post.ps_ao_hbaop && s_post.ps_ao_gtao &&
++                   s_post.ps_ao_blur_h && s_post.ps_ao_blur_v && s_post.ps_ao_comp;
++    if (!s_post.ao_ok) fprintf(stderr, "[KGPU] ambient occlusion unavailable: its shaders did not compile\n");
++    return s_post.ao_ok;
++}
++
 +static bool post_texture(unsigned int w, unsigned int h, DXGI_FORMAT fmt, ID3D11Texture2D **tex, ID3D11ShaderResourceView **srv,
 +                         ID3D11RenderTargetView **rtv)
 +{
@@ -11020,6 +11218,20 @@ index 0000000..cfd3fd4
 +    return true;
 +}
 +
++static bool post_ao_resources(unsigned int w, unsigned int h)
++{
++    unsigned int i;
++    if (s_post.ao[0] && s_post.ao[1]) return true; /* scene resource resize frees both */
++    for (i = 0; i < 2; i++) {
++        if (!post_texture(w, h, DXGI_FORMAT_R8_UNORM, &s_post.ao[i], &s_post.ao_srv[i], &s_post.ao_rtv[i])) {
++            unsigned int j;
++            for (j = 0; j < 2; j++) { SAFE_RELEASE(s_post.ao_srv[j]); SAFE_RELEASE(s_post.ao_rtv[j]); SAFE_RELEASE(s_post.ao[j]); }
++            return false;
++        }
++    }
++    return true;
++}
++
 +static void post_cb(float w, float h, float taps, float radius, float focus_alpha, float depth_scale, float zone, float near_blur,
 +                    float sharpen, float out_w, float out_h)
 +{
@@ -11034,6 +11246,38 @@ index 0000000..cfd3fd4
 +        memcpy(ms.pData, &c, sizeof(c));
 +        ID3D11DeviceContext_Unmap(G.ctx, (ID3D11Resource *)s_post.cb, 0);
 +    }
++}
++
++/* Quality changes the sampling/radius; the mask stays at scene resolution and both blur passes keep five taps. */
++static bool post_ao_cb(unsigned int w, unsigned int h)
++{
++    static const float ssao_taps[4] = { 8, 12, 18, 24 }, ssao_radius[4] = { 5, 8, 11, 15 };
++    static const float hbao_dirs[4] = { 4, 6, 8, 10 }, hbao_radius[4] = { 8, 10, 13, 16 };
++    static const float hbaop_dirs[4] = { 6, 8, 10, 12 }, hbaop_radius[4] = { 10, 13, 17, 21 };
++    static const float gtao_dirs[4] = { 4, 6, 8, 8 }, gtao_radius[4] = { 9, 12, 16, 20 };
++    int q = s_post.ao_quality;
++    D3D11_MAPPED_SUBRESOURCE ms;
++    KgPostCb c;
++    if (q < PCV_AOQ_LOW || q > PCV_AOQ_ULTRA) q = PCV_AOQ_HIGH;
++    memset(&c, 0, sizeof(c));
++    c.p0[0] = 1.0f / w; c.p0[1] = 1.0f / h; c.p0[2] = (float)w; c.p0[3] = (float)h;
++    c.p1[0] = ssao_radius[q]; c.p1[1] = ssao_taps[q]; c.p1[2] = (float)(3 + q); c.p1[3] = 0.48f + 0.08f * q;
++    c.p2[0] = 0.025f; c.p2[1] = 0.30f; c.p2[2] = 0.32f;
++    if (s_post.ao_method == PCV_AO_HBAO) {
++        c.p1[0] = hbao_radius[q]; c.p1[1] = hbao_dirs[q]; c.p1[3] = 0.70f + 0.05f * q;
++    } else if (s_post.ao_method == PCV_AO_HBAO_PLUS) {
++        c.p1[0] = hbaop_radius[q]; c.p1[1] = hbaop_dirs[q]; c.p1[3] = 0.68f + 0.05f * q;
++    } else if (s_post.ao_method == PCV_AO_GTAO) {
++        c.p1[0] = gtao_radius[q]; c.p1[1] = gtao_dirs[q]; c.p1[3] = 1.80f;
++        c.p2[0] = 0.015f; c.p2[1] = 0.48f;
++    }
++    if (!kg_ao_camera(s_post.ao_camera, &c.p3[0], &c.p3[1])) return false;
++    if (SUCCEEDED(ID3D11DeviceContext_Map(G.ctx, (ID3D11Resource *)s_post.cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
++        memcpy(ms.pData, &c, sizeof(c));
++        ID3D11DeviceContext_Unmap(G.ctx, (ID3D11Resource *)s_post.cb, 0);
++        return true;
++    }
++    return false;
 +}
 +
 +/* One full-screen pass: `ps` reading up to four textures, into `rtv` of size w x h. */
@@ -11098,7 +11342,85 @@ index 0000000..cfd3fd4
 +    ID3D11DeviceContext_Unmap(G.ctx, (ID3D11Resource *)stage, 0);
 +}
 +
-+/* The effects on the finished scene in `cs`. `zs` is its depth buffer (needed for depth of field only). */
++/* Opt-in captures only read back one requested frame. No staging resources or CPU copies live between frames. */
++static uint8_t *post_ao_colour_capture(ID3D11Texture2D *tex, unsigned int w, unsigned int h, const char *path)
++{
++    KGpuSurf cs;
++    ID3D11Texture2D *stage = NULL;
++    D3D11_MAPPED_SUBRESOURCE ms;
++    uint8_t *pixels;
++    unsigned int y;
++    memset(&cs, 0, sizeof(cs));
++    cs.tex = tex; cs.hw = w; cs.hh = h;
++    if (!readback(&cs, &stage, &ms)) return NULL;
++    pixels = (uint8_t *)malloc((size_t)w * h * 4);
++    if (pixels) {
++        for (y = 0; y < h; y++) memcpy(pixels + (size_t)y * w * 4, (const uint8_t *)ms.pData + (size_t)y * ms.RowPitch, (size_t)w * 4);
++        if (path && *path) write_bmp(path, pixels, w, h, w * 4);
++    }
++    ID3D11DeviceContext_Unmap(G.ctx, (ID3D11Resource *)stage, 0);
++    SAFE_RELEASE(stage);
++    return pixels;
++}
++
++static void post_ao_mask_capture(unsigned int w, unsigned int h, uint64_t frame)
++{
++    D3D11_TEXTURE2D_DESC td;
++    D3D11_MAPPED_SUBRESOURCE ms;
++    ID3D11Texture2D *stage = NULL;
++    uint8_t *pixels;
++    unsigned int x, y, minv = 255, maxv = 0;
++    uint64_t sum = 0, nonwhite = 0;
++    memset(&td, 0, sizeof(td));
++    td.Width = w; td.Height = h; td.MipLevels = td.ArraySize = 1; td.Format = DXGI_FORMAT_R8_UNORM;
++    td.SampleDesc.Count = 1; td.Usage = D3D11_USAGE_STAGING; td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
++    if (FAILED(ID3D11Device_CreateTexture2D(G.dev, &td, NULL, &stage))) return;
++    ID3D11DeviceContext_CopyResource(G.ctx, (ID3D11Resource *)stage, (ID3D11Resource *)s_post.ao[0]);
++    if (FAILED(ID3D11DeviceContext_Map(G.ctx, (ID3D11Resource *)stage, 0, D3D11_MAP_READ, 0, &ms))) { SAFE_RELEASE(stage); return; }
++    pixels = (uint8_t *)malloc((size_t)w * h * 4);
++    for (y = 0; y < h; y++) {
++        const uint8_t *row = (const uint8_t *)ms.pData + (size_t)y * ms.RowPitch;
++        for (x = 0; x < w; x++) {
++            unsigned int v = row[x];
++            if (v < minv) minv = v;
++            if (v > maxv) maxv = v;
++            sum += v; nonwhite += v < 255;
++            if (pixels) {
++                size_t k = ((size_t)y * w + x) * 4;
++                pixels[k] = pixels[k + 1] = pixels[k + 2] = (uint8_t)v; pixels[k + 3] = 255;
++            }
++        }
++    }
++    if (pixels) { write_bmp(s_post.ao_dump, pixels, w, h, w * 4); free(pixels); }
++    fprintf(stderr, "[KAO] frame %llu method %d quality %d mask min %u max %u mean %.4f occluded %llu/%llu\n",
++            (unsigned long long)frame, s_post.ao_method, s_post.ao_quality, minv, maxv, (double)sum / ((double)w * h),
++            (unsigned long long)nonwhite, (unsigned long long)((uint64_t)w * h));
++    ID3D11DeviceContext_Unmap(G.ctx, (ID3D11Resource *)stage, 0);
++    SAFE_RELEASE(stage);
++}
++
++static void post_ao_scene_compare(KGpuSurf *cs, const uint8_t *before, const char *after_path, uint64_t frame)
++{
++    uint8_t *after = post_ao_colour_capture(cs->tex, cs->hw, cs->hh, after_path);
++    uint64_t changed = 0, sum = 0;
++    unsigned int x, y, maxd = 0;
++    if (before && after) {
++        for (y = 0; y < cs->hh; y++) for (x = 0; x < cs->hw; x++) {
++            size_t k = ((size_t)y * cs->hw + x) * 4;
++            unsigned int ch, pixel_diff = 0;
++            for (ch = 0; ch < 3; ch++) {
++                unsigned int d = (unsigned int)abs((int)before[k + ch] - (int)after[k + ch]);
++                sum += d; if (d > maxd) maxd = d; pixel_diff |= d;
++            }
++            changed += pixel_diff != 0;
++        }
++        fprintf(stderr, "[KAO] frame %llu method %d quality %d same-frame changed pixels %llu abs-sum %llu max RGB difference %u\n",
++                (unsigned long long)frame, s_post.ao_method, s_post.ao_quality, (unsigned long long)changed, (unsigned long long)sum, maxd);
++    } else fprintf(stderr, "[KAO] frame %llu same-frame colour readback failed\n", (unsigned long long)frame);
++    free(after);
++}
++
++/* The effects on the finished scene in `cs`. AO and depth of field need its real depth buffer in `zs`. */
 +static void kg_post_scene(KGpuSurf *cs, KGpuSurf *zs)
 +{
 +    float taps, radius, depth_scale = 140.0f;
@@ -11111,6 +11433,44 @@ index 0000000..cfd3fd4
 +        if (e && *e) depth_scale = (float)atof(e);
 +    }
 +    if (s_post.depth_stats > 0 && zs && (G.frames % (uint64_t)s_post.depth_stats) == 0) kg_post_depth_stats(zs);
++    if (s_post.ao_method != PCV_AO_OFF && !s_post.ao_camera && !s_post.ao_skip_traced &&
++        (s_post.post_trace || *s_post.ao_scene_prefix || *s_post.ao_dump)) {
++        s_post.ao_skip_traced = true;
++        fprintf(stderr, "[KAO] frame %llu ambient occlusion skipped: no valid queued world camera\n", (unsigned long long)(G.frames + 1));
++    }
++    if (s_post.ao_method != PCV_AO_OFF && zs && zs->depth && zs->real && zs->srv && zs->hw == cs->hw && zs->hh == cs->hh && post_ao_init() &&
++        post_ao_resources(cs->hw, cs->hh) && post_ao_cb(cs->hw, cs->hh)) {
++        ID3D11PixelShader *ps = s_post.ps_ao_ssao;
++        const uint64_t frame = G.frames + 1;
++        bool scene_capture = !s_post.ao_scene_done && (s_post.post_trace || *s_post.ao_scene_prefix) && frame >= s_post.ao_scene_frame;
++        bool mask_capture = !s_post.ao_dump_done && *s_post.ao_dump && frame >= s_post.ao_dump_frame;
++        uint8_t *before = NULL;
++        char before_path[MAX_PATH + 16], after_path[MAX_PATH + 16];
++        before_path[0] = after_path[0] = 0;
++        if (s_post.ao_method == PCV_AO_HBAO) ps = s_post.ps_ao_hbao;
++        else if (s_post.ao_method == PCV_AO_HBAO_PLUS) ps = s_post.ps_ao_hbaop;
++        else if (s_post.ao_method == PCV_AO_GTAO) ps = s_post.ps_ao_gtao;
++        if (scene_capture || mask_capture) {
++            float hx = 0.0f, hy = 0.0f;
++            kg_ao_camera(s_post.ao_camera, &hx, &hy);
++            fprintf(stderr, "[KAO] frame %llu queued world camera halfX %.9g halfY %.9g\n", (unsigned long long)frame, (double)hx, (double)hy);
++        }
++        if (scene_capture) {
++            if (*s_post.ao_scene_prefix) {
++                snprintf(before_path, sizeof(before_path), "%s_before.bmp", s_post.ao_scene_prefix);
++                snprintf(after_path, sizeof(after_path), "%s_after.bmp", s_post.ao_scene_prefix);
++            }
++            before = post_ao_colour_capture(cs->tex, cs->hw, cs->hh, before_path);
++            s_post.ao_scene_done = true;
++        }
++        ID3D11DeviceContext_CopyResource(G.ctx, (ID3D11Resource *)s_post.copy, (ID3D11Resource *)cs->tex);
++        post_pass(ps, s_post.ao_rtv[0], cs->hw, cs->hh, NULL, NULL, zs->srv, NULL);
++        post_pass(s_post.ps_ao_blur_h, s_post.ao_rtv[1], cs->hw, cs->hh, NULL, s_post.ao_srv[0], zs->srv, NULL);
++        post_pass(s_post.ps_ao_blur_v, s_post.ao_rtv[0], cs->hw, cs->hh, NULL, s_post.ao_srv[1], zs->srv, NULL);
++        post_pass(s_post.ps_ao_comp, cs->rtv, cs->hw, cs->hh, s_post.copy_srv, s_post.ao_srv[0], NULL, NULL);
++        if (mask_capture) { s_post.ao_dump_done = true; post_ao_mask_capture(cs->hw, cs->hh, frame); }
++        if (scene_capture) { post_ao_scene_compare(cs, before, after_path, frame); free(before); }
++    }
 +    if (s_post.dof && zs && zs->depth) {
 +        const unsigned int next = s_post.focus_cur ^ 1u;
 +        double dt = s_post.last_qpc ? (double)(now - s_post.last_qpc) / (double)G.qpf : 0.016;
@@ -11150,7 +11510,11 @@ index 0000000..cfd3fd4
 +static void kg_post_note_draw(const KPixelState *ps, const KGpuSurf *cs, KGpuSurf *zs)
 +{
 +    if (!s_post.scene_fx || !post_main_target(cs)) return;
-+    if (ps->depth_write && zs) { s_post.world++; return; }
++    if (ps->depth_write && zs) {
++        if (!s_post.world) s_post.ao_camera = s_ao_draw_camera;
++        s_post.world++;
++        return;
++    }
 +    /* The HUD and menus: depth test on, always passing, nothing written. */
 +    if (!s_post.done && s_post.world >= 4 && ps->depth_test && ps->depth_func == 7 && !ps->depth_write)
 +        kg_post_scene((KGpuSurf *)cs, zs);
@@ -11167,10 +11531,21 @@ index 0000000..cfd3fd4
 +    if (!s_post.cfg) {
 +        const char *e = getenv("RECOMP_KGPU_DEPTH_STATS");
 +        s_post.depth_stats = e && *e ? atoi(e) : 0;
++        e = getenv("RECOMP_KGPU_AO_DUMP");
++        if (e && *e) snprintf(s_post.ao_dump, sizeof(s_post.ao_dump), "%s", e);
++        e = getenv("RECOMP_KGPU_AO_DUMP_FRAME");
++        s_post.ao_dump_frame = e && *e ? strtoull(e, NULL, 0) : 120;
++        e = getenv("RECOMP_KGPU_AO_SCENE_DUMP_PREFIX");
++        if (e && *e) snprintf(s_post.ao_scene_prefix, sizeof(s_post.ao_scene_prefix), "%s", e);
++        e = getenv("RECOMP_KGPU_AO_SCENE_DUMP_FRAME");
++        s_post.ao_scene_frame = e && *e ? strtoull(e, NULL, 0) : 120;
++        e = getenv("RECOMP_KGPU_POST_TRACE");
++        s_post.post_trace = e && *e && atoi(e) != 0;
 +    }
 +    s_post.cfg = true;
 +    s_post.aa = (int)v.aa; s_post.dof = (int)v.dof; s_post.sharpen = (int)v.sharpen;
-+    s_post.scene_fx = s_post.aa == PCV_AA_FXAA || s_post.dof || s_post.sharpen || s_post.depth_stats > 0;
++    s_post.ao_method = (int)v.ao_method; s_post.ao_quality = (int)v.ao_quality;
++    s_post.scene_fx = s_post.ao_method != PCV_AO_OFF || s_post.aa == PCV_AA_FXAA || s_post.dof || s_post.sharpen || s_post.depth_stats > 0;
 +    if ((int)v.af != s_af) {
 +        unsigned int i;
 +        s_af = (int)v.af;
@@ -11194,6 +11569,7 @@ index 0000000..cfd3fd4
 +static void kg_post_after_flip(void)
 +{
 +    s_post.world = 0;
++    s_post.ao_camera = 0;
 +    s_post.done = false;
 +}
 +
@@ -33100,7 +33476,7 @@ index 0000000..15dfe54
 +#endif
 diff --git a/src/video/pc_menu.c b/src/video/pc_menu.c
 new file mode 100644
-index 0000000..b558e44
+index 0000000..1b65387
 --- /dev/null
 +++ b/src/video/pc_menu.c
 @@ -0,0 +1,2338 @@
@@ -33425,7 +33801,7 @@ index 0000000..b558e44
 +
 +static int video_row_named(const char *name)
 +{
-+    static const char *const names[] = { "mode", "window", "internal", "aa", "af", "dof", "sharpen", "aspect",
++    static const char *const names[] = { "mode", "window", "internal", "aa", "af", "dof", "sharpen", "ao_method", "ao_quality", "aspect",
 +        "fov", "scale", "filter", "vsync", "fps", "blur" };
 +    int i;
 +    for (i = 0; i < (int)(sizeof(names) / sizeof(names[0])); i++) if (!_stricmp(name, names[i])) return i;
@@ -35763,10 +36139,10 @@ index 0000000..6affd56
 +}
 diff --git a/src/video/pc_video.c b/src/video/pc_video.c
 new file mode 100644
-index 0000000..867b68f
+index 0000000..b7b77eb
 --- /dev/null
 +++ b/src/video/pc_video.c
-@@ -0,0 +1,570 @@
+@@ -0,0 +1,605 @@
 +/* PC video settings: defaults, settings file, environment overrides. See pc_video.h. */
 +#include "pc_video.h"
 +#include <stdio.h>
@@ -35812,6 +36188,8 @@ index 0000000..867b68f
 +    s->af = 16;
 +    s->dof = PCV_STEP_OFF;
 +    s->sharpen = PCV_STEP_OFF;
++    s->ao_method = PCV_AO_OFF;
++    s->ao_quality = PCV_AOQ_HIGH;
 +}
 +
 +static int in_list(const unsigned *list, unsigned count, unsigned v)
@@ -35836,6 +36214,8 @@ index 0000000..867b68f
 +
 +static const char *const k_aa_names[PCV_AA_COUNT] = { "off", "fxaa", "ssaa" };
 +static const char *const k_step_names[PCV_STEP_COUNT] = { "off", "low", "medium", "high" };
++static const char *const k_ao_names[PCV_AO_COUNT] = { "off", "ssao", "hbao", "hbao_plus", "gtao" };
++static const char *const k_ao_quality_names[PCV_AOQ_COUNT] = { "low", "medium", "high", "ultra" };
 +static int name_index(const char *const *names, unsigned count, const char *t)
 +{
 +    unsigned i;
@@ -35946,6 +36326,17 @@ index 0000000..867b68f
 +    } else if (!_stricmp(key, "sharpen")) {
 +        int a = name_index(k_step_names, PCV_STEP_COUNT, value);
 +        if (a >= 0) { s->sharpen = (unsigned)a; return 1; }
++    } else if (!_stricmp(key, "ao_method")) {
++        int a = name_index(k_ao_names, PCV_AO_COUNT, value);
++        if (a >= 0) { s->ao_method = (unsigned)a; return 1; }
++    } else if (!_stricmp(key, "ao_quality")) {
++        int a = name_index(k_ao_quality_names, PCV_AOQ_COUNT, value);
++        if (a >= 0) { s->ao_quality = (unsigned)a; return 1; }
++    } else if (!_stricmp(key, "ssao")) {
++        /* The original single SSAO setting combined method and quality. */
++        int a = name_index(k_ao_quality_names, PCV_AOQ_COUNT, value);
++        if (!_stricmp(value, "off")) { s->ao_method = PCV_AO_OFF; return 1; }
++        if (a >= 0) { s->ao_method = PCV_AO_SSAO; s->ao_quality = (unsigned)a; return 1; }
 +    }
 +    return 0;
 +}
@@ -35993,14 +36384,18 @@ index 0000000..867b68f
 +        "aa=%s\n"
 +        "af=%u\n"
 +        "dof=%s\n"
-+        "sharpen=%s\n",
++        "sharpen=%s\n"
++        "ao_method=%s\n"
++        "ao_quality=%s\n",
 +        s->internal_height, s->window_width, s->window_height,
 +        s->borderless ? "borderless" : "windowed",
 +        s->scale == PCV_SCALE_STRETCH ? "stretch" : s->scale == PCV_SCALE_INTEGER ? "integer" : "fit",
 +        s->nearest ? "nearest" : "linear", s->vsync ? 1u : 0u, s->fps_limit,
 +        pc_video_aspect_name(s->aspect), s->fov, s->motion_blur_off ? "off" : "original",
 +        k_aa_names[s->aa < PCV_AA_COUNT ? s->aa : 0], s->af, k_step_names[s->dof < PCV_STEP_COUNT ? s->dof : 0],
-+        k_step_names[s->sharpen < PCV_STEP_COUNT ? s->sharpen : 0]);
++        k_step_names[s->sharpen < PCV_STEP_COUNT ? s->sharpen : 0],
++        k_ao_names[s->ao_method < PCV_AO_COUNT ? s->ao_method : PCV_AO_OFF],
++        k_ao_quality_names[s->ao_quality < PCV_AOQ_COUNT ? s->ao_quality : PCV_AOQ_HIGH]);
 +    return n < 0 ? 0 : (size_t)n;
 +}
 +
@@ -36094,6 +36489,18 @@ index 0000000..867b68f
 +        int a = name_index(k_step_names, PCV_STEP_COUNT, t);
 +        lock |= PCV_LOCK_SHARPEN; s->sharpen = a >= 0 ? (unsigned)a : PCV_STEP_OFF;
 +    }
++    if ((t = env_text("RECOMP_SSAO")) != NULL) {
++        lock |= PCV_LOCK_AO_METHOD | PCV_LOCK_AO_QUALITY;
++        if (!apply_key(s, "ssao", t)) { s->ao_method = PCV_AO_OFF; s->ao_quality = PCV_AOQ_HIGH; }
++    }
++    if ((t = env_text("RECOMP_AO_METHOD")) != NULL) {
++        int a = name_index(k_ao_names, PCV_AO_COUNT, t);
++        lock |= PCV_LOCK_AO_METHOD; s->ao_method = a >= 0 ? (unsigned)a : PCV_AO_OFF;
++    }
++    if ((t = env_text("RECOMP_AO_QUALITY")) != NULL) {
++        int a = name_index(k_ao_quality_names, PCV_AOQ_COUNT, t);
++        lock |= PCV_LOCK_AO_QUALITY; s->ao_quality = a >= 0 ? (unsigned)a : PCV_AOQ_HIGH;
++    }
 +    if ((t = env_text("RECOMP_INTERNAL_HEIGHT")) != NULL && parse_uint(t, 1, 100000, &u) &&
 +        in_list(pc_video_internal_heights, pc_video_internal_height_count, u)) {
 +        lock |= PCV_LOCK_INTERNAL; s->internal_height = u;
@@ -36133,12 +36540,13 @@ index 0000000..867b68f
 +        unsigned rw, rh;
 +        pc_video_render_size_for(&s_cur, &rw, &rh);
 +        fprintf(stderr, "[VIDEO] internal %ux%u (%up), window %ux%u %s, scale %u, filter %s, vsync %u, cap %u, camera %s, fov %g, blur %s%s; "
-+                        "aa %s, af %ux, dof %s, sharpen %s; locked 0x%X\n",
++                        "aa %s, af %ux, dof %s, sharpen %s, ao %s (%s); locked 0x%X\n",
 +                rw, rh, s_cur.internal_height, s_cur.window_width, s_cur.window_height,
 +                s_cur.borderless ? "borderless" : "windowed", s_cur.scale, s_cur.nearest ? "nearest" : "linear",
 +                s_cur.vsync, s_cur.fps_limit, pc_video_aspect_name(s_cur.aspect), s_cur.fov,
 +                s_cur.motion_blur_off ? "off" : "original", s_cur.render_override_w ? " (raster size overridden)" : "",
-+                k_aa_names[s_cur.aa], s_cur.af, k_step_names[s_cur.dof], k_step_names[s_cur.sharpen], s_locked);
++                k_aa_names[s_cur.aa], s_cur.af, k_step_names[s_cur.dof], k_step_names[s_cur.sharpen],
++                k_ao_names[s_cur.ao_method], k_ao_quality_names[s_cur.ao_quality], s_locked);
 +    }
 +}
 +
@@ -36224,7 +36632,8 @@ index 0000000..867b68f
 +           s->window_width >= 320 && s->window_width <= 7680 && s->window_height >= 240 && s->window_height <= 4320 &&
 +           s->scale <= PCV_SCALE_INTEGER && in_list(pc_video_fps_limits, pc_video_fps_limit_count, s->fps_limit) &&
 +           s->aspect < PCV_ASPECT_COUNT && valid_fov(s->fov) && s->aa < PCV_AA_COUNT &&
-+           in_list(pc_video_af_levels, pc_video_af_level_count, s->af) && s->dof < PCV_STEP_COUNT && s->sharpen < PCV_STEP_COUNT;
++           in_list(pc_video_af_levels, pc_video_af_level_count, s->af) && s->dof < PCV_STEP_COUNT && s->sharpen < PCV_STEP_COUNT &&
++           s->ao_method < PCV_AO_COUNT && s->ao_quality < PCV_AOQ_COUNT;
 +}
 +
 +/* The new values over the current ones, except where the environment holds a field. */
@@ -36246,6 +36655,8 @@ index 0000000..867b68f
 +    if (locked & PCV_LOCK_AF) r.af = base->af;
 +    if (locked & PCV_LOCK_DOF) r.dof = base->dof;
 +    if (locked & PCV_LOCK_SHARPEN) r.sharpen = base->sharpen;
++    if (locked & PCV_LOCK_AO_METHOD) r.ao_method = base->ao_method;
++    if (locked & PCV_LOCK_AO_QUALITY) r.ao_quality = base->ao_quality;
 +    return r;
 +}
 +
@@ -36339,10 +36750,10 @@ index 0000000..867b68f
 +}
 diff --git a/src/video/pc_video.h b/src/video/pc_video.h
 new file mode 100644
-index 0000000..776476a
+index 0000000..5610b01
 --- /dev/null
 +++ b/src/video/pc_video.h
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,130 @@
 +/*
 + * pc_video.h -- the PC video settings of the recompiled game: one model for the window, the
 + * internal (render) resolution, the camera and the presenter.
@@ -36381,6 +36792,10 @@ index 0000000..776476a
 + * resolves back to the internal resolution. Depth of field and sharpening have four steps: off, low, medium, high. */
 +enum { PCV_AA_OFF, PCV_AA_FXAA, PCV_AA_SSAA, PCV_AA_COUNT };
 +enum { PCV_STEP_OFF, PCV_STEP_LOW, PCV_STEP_MEDIUM, PCV_STEP_HIGH, PCV_STEP_COUNT };
++/* Ambient occlusion is a scene-depth effect applied before the HUD. Quality controls sampling
++ * density and radius; the AO mask and its depth-aware blur stay at the scene resolution. */
++enum { PCV_AO_OFF, PCV_AO_SSAO, PCV_AO_HBAO, PCV_AO_HBAO_PLUS, PCV_AO_GTAO, PCV_AO_COUNT };
++enum { PCV_AOQ_LOW, PCV_AOQ_MEDIUM, PCV_AOQ_HIGH, PCV_AOQ_ULTRA, PCV_AOQ_COUNT };
 +
 +typedef struct PcVideoSettings {
 +    unsigned internal_height;                 /* 480, 720, 1080, 1440 or 2160 */
@@ -36397,6 +36812,8 @@ index 0000000..776476a
 +    unsigned af;                              /* anisotropic filtering: 1 (off), 2, 4, 8 or 16 */
 +    unsigned dof;                             /* depth of field, PCV_STEP_* */
 +    unsigned sharpen;                         /* sharpening, PCV_STEP_* */
++    unsigned ao_method;                       /* ambient occlusion, PCV_AO_* */
++    unsigned ao_quality;                      /* ambient occlusion sampling, PCV_AOQ_* */
 +    unsigned render_override_w, render_override_h; /* both non-zero: an explicit raster size (RECOMP_RENDER_*) */
 +} PcVideoSettings;
 +
@@ -36405,7 +36822,8 @@ index 0000000..776476a
 +    PCV_LOCK_WINDOW_SIZE = 1u << 0, PCV_LOCK_WINDOW_MODE = 1u << 1, PCV_LOCK_INTERNAL = 1u << 2,
 +    PCV_LOCK_SCALE = 1u << 3, PCV_LOCK_FILTER = 1u << 4, PCV_LOCK_VSYNC = 1u << 5,
 +    PCV_LOCK_FPS = 1u << 6, PCV_LOCK_ASPECT = 1u << 7, PCV_LOCK_FOV = 1u << 8, PCV_LOCK_BLUR = 1u << 9,
-+    PCV_LOCK_AA = 1u << 10, PCV_LOCK_AF = 1u << 11, PCV_LOCK_DOF = 1u << 12, PCV_LOCK_SHARPEN = 1u << 13
++    PCV_LOCK_AA = 1u << 10, PCV_LOCK_AF = 1u << 11, PCV_LOCK_DOF = 1u << 12, PCV_LOCK_SHARPEN = 1u << 13,
++    PCV_LOCK_AO_METHOD = 1u << 14, PCV_LOCK_AO_QUALITY = 1u << 15
 +};
 +
 +extern const unsigned pc_video_internal_heights[];   /* 480 .. 2160 */
@@ -36468,10 +36886,10 @@ index 0000000..776476a
 +#endif /* XBOXRECOMP_PC_VIDEO_H */
 diff --git a/src/video/pc_video_menu.c b/src/video/pc_video_menu.c
 new file mode 100644
-index 0000000..3938e3a
+index 0000000..db9c143
 --- /dev/null
 +++ b/src/video/pc_video_menu.c
-@@ -0,0 +1,767 @@
+@@ -0,0 +1,788 @@
 +/* The native Video Settings page. See pc_video_menu.h. */
 +#include "pc_video_menu.h"
 +#include "pc_video.h"
@@ -36492,6 +36910,7 @@ index 0000000..3938e3a
 +enum {
 +    R_MODE = PCV_ROW_MODE, R_WINDOW = PCV_ROW_WINDOW, R_INTERNAL = PCV_ROW_INTERNAL, R_AA = PCV_ROW_AA, R_AF = PCV_ROW_AF,
 +    R_DOF = PCV_ROW_DOF, R_SHARPEN = PCV_ROW_SHARPEN, R_ASPECT = PCV_ROW_ASPECT, R_FOV = PCV_ROW_FOV, R_SCALE = PCV_ROW_SCALE,
++    R_AO_METHOD = PCV_ROW_AO_METHOD, R_AO_QUALITY = PCV_ROW_AO_QUALITY,
 +    R_FILTER = PCV_ROW_FILTER, R_VSYNC = PCV_ROW_VSYNC, R_FPS = PCV_ROW_FPS, R_BLUR = PCV_ROW_BLUR, R_RESET = PCV_ROW_RESET,
 +    R_DONE = PCV_ROW_DONE, R_COUNT = PCV_ROW_COUNT
 +};
@@ -36626,6 +37045,10 @@ index 0000000..3938e3a
 +        s.dof = wrap((int)s.dof + dir, PCV_STEP_COUNT); break;
 +    case R_SHARPEN:
 +        s.sharpen = wrap((int)s.sharpen + dir, PCV_STEP_COUNT); break;
++    case R_AO_METHOD:
++        s.ao_method = wrap((int)s.ao_method + dir, PCV_AO_COUNT); break;
++    case R_AO_QUALITY:
++        s.ao_quality = wrap((int)s.ao_quality + dir, PCV_AOQ_COUNT); break;
 +    case R_ASPECT:
 +        s.aspect = wrap((int)s.aspect + dir, PCV_ASPECT_COUNT); break;
 +    case R_FOV: {
@@ -36966,7 +37389,7 @@ index 0000000..3938e3a
 +
 +static const char *const k_row_label[R_COUNT] = {
 +    "WINDOW MODE", "WINDOW SIZE", "INTERNAL RESOLUTION", "ANTI-ALIASING", "ANISOTROPIC FILTERING", "DEPTH OF FIELD",
-+    "SHARPENING", "ASPECT RATIO", "FIELD OF VIEW", "SCALING", "SCALING FILTER", "VSYNC", "FRAME RATE LIMIT",
++    "SHARPENING", "AO METHOD", "AO QUALITY", "ASPECT RATIO", "FIELD OF VIEW", "SCALING", "SCALING FILTER", "VSYNC", "FRAME RATE LIMIT",
 +    "MOTION BLUR", "RESET TO DEFAULTS", "DONE"
 +};
 +
@@ -37005,6 +37428,14 @@ index 0000000..3938e3a
 +        break;
 +    case R_SHARPEN:
 +        strcpy(value, s->sharpen == PCV_STEP_LOW ? "LOW" : s->sharpen == PCV_STEP_MEDIUM ? "MEDIUM" : s->sharpen == PCV_STEP_HIGH ? "HIGH" : "OFF");
++        break;
++    case R_AO_METHOD:
++        strcpy(value, s->ao_method == PCV_AO_SSAO ? "SSAO CLASSIC" : s->ao_method == PCV_AO_HBAO ? "HBAO" :
++                s->ao_method == PCV_AO_HBAO_PLUS ? "HBAO+" : s->ao_method == PCV_AO_GTAO ? "GTAO" : "OFF");
++        break;
++    case R_AO_QUALITY:
++        strcpy(value, s->ao_quality == PCV_AOQ_LOW ? "LOW" : s->ao_quality == PCV_AOQ_MEDIUM ? "MEDIUM" :
++                s->ao_quality == PCV_AOQ_ULTRA ? "ULTRA" : "HIGH");
 +        break;
 +    case R_ASPECT:
 +        strcpy(value, s->aspect == PCV_ASPECT_ORIGINAL ? "ORIGINAL" : s->aspect == PCV_ASPECT_4_3 ? "4:3" :
@@ -37049,6 +37480,12 @@ index 0000000..3938e3a
 +    case R_AF: return live ? "Keeps textures sharp on floors and walls seen at a slant." : "Anisotropic filtering is available with the GPU renderer only.";
 +    case R_DOF: return live ? "Blurs the background. Higher is a wider, stronger blur." : "Depth of field is available with the GPU renderer only.";
 +    case R_SHARPEN: return live ? "Brings back fine detail softened by filters and scaling." : "Sharpening is available with the GPU renderer only.";
++    case R_AO_METHOD: return live ? "Ambient occlusion adds contact shading using scene depth. Choose SSAO Classic, HBAO, HBAO+ or GTAO."
++                                    : "Ambient occlusion is available with the GPU renderer only.";
++    case R_AO_QUALITY:
++        if (!live) return "Ambient occlusion is available with the GPU renderer only.";
++        if (cur.ao_method == PCV_AO_OFF) return "Quality changes AO sampling density and radius. Choose an AO method to enable the effect.";
++        return "Higher quality increases AO sampling density and radius, with more GPU work. All levels use scene resolution and depth-aware blur.";
 +    case R_ASPECT: return "The shape of the camera. Original is the game's 4:3 camera.";
 +    case R_FOV: return "Vertical field of view during gameplay, in degrees.";
 +    case R_SCALE: return "Fit keeps the picture's shape. Stretch fills the window. Integer uses whole-number scales.";
@@ -37081,7 +37518,8 @@ index 0000000..3938e3a
 +    else if (row == R_ASPECT && s->aspect == PCV_ASPECT_ORIGINAL) wcsncpy(out, L"ORIGINAL (4:3)", cap);
 +    out[cap - 1] = 0;
 +    if (!live && ((row == R_AA && s->aa) || (row == R_AF && s->af > 1) ||
-+                  (row == R_DOF && s->dof) || (row == R_SHARPEN && s->sharpen)))
++                  (row == R_DOF && s->dof) || (row == R_SHARPEN && s->sharpen) ||
++                  ((row == R_AO_METHOD || row == R_AO_QUALITY) && s->ao_method != PCV_AO_OFF)))
 +        wcsncat(out, L"  GPU ONLY", cap - wcslen(out) - 1);
 +}
 +
@@ -37090,6 +37528,7 @@ index 0000000..3938e3a
 +    switch (row) {
 +    case R_MODE: return PCV_LOCK_WINDOW_MODE; case R_WINDOW: return PCV_LOCK_WINDOW_SIZE; case R_INTERNAL: return PCV_LOCK_INTERNAL;
 +    case R_AA: return PCV_LOCK_AA; case R_AF: return PCV_LOCK_AF; case R_DOF: return PCV_LOCK_DOF; case R_SHARPEN: return PCV_LOCK_SHARPEN;
++    case R_AO_METHOD: return PCV_LOCK_AO_METHOD; case R_AO_QUALITY: return PCV_LOCK_AO_QUALITY;
 +    case R_ASPECT: return PCV_LOCK_ASPECT; case R_FOV: return PCV_LOCK_FOV; case R_SCALE: return PCV_LOCK_SCALE;
 +    case R_FILTER: return PCV_LOCK_FILTER; case R_VSYNC: return PCV_LOCK_VSYNC; case R_FPS: return PCV_LOCK_FPS;
 +    case R_BLUR: return PCV_LOCK_BLUR; default: return 0;
@@ -37241,10 +37680,10 @@ index 0000000..3938e3a
 +#endif
 diff --git a/src/video/pc_video_menu.h b/src/video/pc_video_menu.h
 new file mode 100644
-index 0000000..2d31991
+index 0000000..3816976
 --- /dev/null
 +++ b/src/video/pc_video_menu.h
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,79 @@
 +/*
 + * pc_video_menu.h -- video settings services and the legacy presenter popup.
 + *
@@ -37270,7 +37709,8 @@ index 0000000..2d31991
 +
 +/* The rows of the page, top to bottom (the last two are actions). */
 +enum {
-+    PCV_ROW_MODE, PCV_ROW_WINDOW, PCV_ROW_INTERNAL, PCV_ROW_AA, PCV_ROW_AF, PCV_ROW_DOF, PCV_ROW_SHARPEN, PCV_ROW_ASPECT,
++    PCV_ROW_MODE, PCV_ROW_WINDOW, PCV_ROW_INTERNAL, PCV_ROW_AA, PCV_ROW_AF, PCV_ROW_DOF, PCV_ROW_SHARPEN,
++    PCV_ROW_AO_METHOD, PCV_ROW_AO_QUALITY, PCV_ROW_ASPECT,
 +    PCV_ROW_FOV, PCV_ROW_SCALE, PCV_ROW_FILTER, PCV_ROW_VSYNC, PCV_ROW_FPS, PCV_ROW_BLUR, PCV_ROW_RESET, PCV_ROW_DONE,
 +    PCV_ROW_COUNT
 +};
