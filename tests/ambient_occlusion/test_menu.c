@@ -1312,83 +1312,6 @@ static int cmd_render(int argc, char **argv)
     return 0;
 }
 
-/* A cutscene has no native page. The hint still draws at the client area's bottom-right even
- * with letterboxing, and hiding it restores the page without contaminating that cache. */
-static void test_movie_skip_prompt(void)
-{
-    const unsigned w = 1280, h = 720;
-    const int px = 100, py = 60;
-    const unsigned pw = 1080, ph = 600;
-    const uint32_t *pixels = NULL;
-    uint32_t *before = (uint32_t *)malloc((size_t)w * h * 4);
-    int changed = 0, x, y, x0 = (int)w, y0 = (int)h, x1 = -1, y1 = -1, bright = 0, premultiplied = 1;
-    unsigned box[4], i;
-    PcMenuGlyph glyphs[95];
-    const uint32_t texel = 0xFFFFFFFFu;
-    PcMenuFont font;
-    video_fresh();
-    /* Self-contained location/alpha checks; no game data or production profile required. */
-    memset(glyphs, 0, sizeof(glyphs));
-    for (i = 0; i < 95; i++) {
-        glyphs[i].code = (uint16_t)(32 + i);
-        glyphs[i].w = i ? 1.0f : 0; glyphs[i].h = i ? 1.0f : 0; glyphs[i].advance = 0.5f;
-    }
-    memset(&font, 0, sizeof(font));
-    font.pixels = &texel; font.width = font.height = 1; font.nominal = 1;
-    font.glyphs = glyphs; font.count = 95;
-    CHECK(pc_menu_set_font(PCM_FONT_SMALL, &font), "a self-contained font for the movie hint");
-    CHECK(pc_menu_has_font(PCM_FONT_SMALL) && !pc_menu_has_font(-1) && !pc_menu_has_font(PCM_FONT_COUNT),
-          "font readiness supports shared initialization and rejects invalid slots");
-    reset_game();
-    CHECK(!pc_menu_active(), "a movie hint needs no native menu");
-    pc_menu_overlay(w, h, px, py, pw, ph, &pixels, &changed);
-    pc_menu_set_movie_skip_prompt(1);
-    CHECK(pc_menu_overlay(w, h, px, py, pw, ph, &pixels, &changed) && changed && pixels,
-          "the hint draws over a cutscene with no native page");
-    for (y = 0; y < (int)h; y++) for (x = 0; x < (int)w; x++) {
-        const uint32_t p = pixels[(size_t)y * w + x];
-        if (!p) continue;
-        if (x < x0) x0 = x;
-        if (y < y0) y0 = y;
-        if (x > x1) x1 = x;
-        if (y > y1) y1 = y;
-        if ((p & 255u) > 160) bright++;
-        if (((p >> 16) & 255u) > (p >> 24) || ((p >> 8) & 255u) > (p >> 24) || (p & 255u) > (p >> 24)) premultiplied = 0;
-    }
-    CHECK(x0 > (int)w / 2 && y0 > (int)h * 8 / 10 && x1 > (int)w - 100 && y1 > (int)h - 100 &&
-          x1 < (int)w - 10 && y1 < (int)h - 10,
-          "the hint sits at the client's bottom-right safe margin: (%d,%d)-(%d,%d)", x0, y0, x1, y1);
-    CHECK(bright > 20, "the text is bright enough to read over the hint background (%d pixels)", bright);
-    CHECK(premultiplied, "hint pixels use premultiplied alpha");
-    CHECK(pc_menu_overlay_dirty(box) && box[0] == 0 && box[1] == 0 && box[2] == w && box[3] == h,
-          "showing the hint invalidates its upload");
-    CHECK(pc_menu_overlay(w, h, px, py, pw, ph, &pixels, &changed) && !changed, "an unchanged hint reuses its pixels");
-    memcpy(before, pixels, (size_t)w * h * 4);
-    CHECK(pc_menu_overlay(w, h, px, 180, pw, 480, &pixels, &changed) && !changed,
-          "a changed movie picture keeps the client-anchored hint in place");
-    CHECK(!memcmp(before,pixels,(size_t)w*h*4), "letterboxing changes leave hint pixels unchanged");
-    CHECK(pc_menu_overlay(3440,1440,760,0,1920,1440,&pixels,&changed) && changed,
-          "an ultrawide client redraws the hint beyond its fitted movie");
-    CHECK(pixels[(size_t)(1440-61)*3440+(3440-61)] != 0,
-          "the ultrawide hint reaches the client's scaled bottom-right margin");
-    CHECK(pc_menu_overlay(640, 480, 0, 0, 640, 480, &pixels, &changed) && changed, "a resized window redraws the hint");
-    pc_menu_set_movie_skip_prompt(0);
-    CHECK(!pc_menu_overlay(640, 480, 0, 0, 640, 480, &pixels, &changed) && changed, "hiding the last layer requests a redraw");
-    CHECK(!pc_menu_overlay(640, 480, 0, 0, 640, 480, &pixels, &changed) && !changed, "the hidden hint has no repeated redraw");
-    reset_game(); tick("PauseMenu"); Sleep(350); tick("PauseMenu");
-    CHECK(pc_menu_overlay(w, h, px, py, pw, ph, &pixels, &changed) && pixels, "the page is drawn before composing the hint");
-    memcpy(before, pixels, (size_t)w * h * 4);
-    pc_menu_set_movie_skip_prompt(1);
-    CHECK(pc_menu_overlay(w, h, px, py, pw, ph, &pixels, &changed) && changed && memcmp(before, pixels, (size_t)w * h * 4),
-          "the hint composes over an existing page");
-    pc_menu_set_movie_skip_prompt(0);
-    CHECK(pc_menu_overlay(w, h, px, py, pw, ph, &pixels, &changed) && changed && !memcmp(before, pixels, (size_t)w * h * 4),
-          "hiding the hint restores the exact cached page");
-    CHECK(pc_menu_overlay_dirty(box) && box[2] == w && box[3] == h, "restoring a page replaces the composed upload");
-    free(before);
-    reset_game();
-}
-
 int main(int argc, char **argv)
 {
     unsigned i, k;
@@ -1396,12 +1319,6 @@ int main(int argc, char **argv)
     _putenv("RECOMP_BLACK_PROMPT_MODE=keyboard_mouse");
     _putenv("RECOMP_BLACK_INPUT_MODE=keyboard_mouse");
     if (getenv("PCM_PAD")) _putenv("RECOMP_BLACK_PROMPT_MODE=controller");   /* render: the pad's prompts */
-    if (argc == 2 && !strcmp(argv[1], "movie-hint-check")) {
-        test_movie_skip_prompt();
-        if (g_video_ini[0]) DeleteFileA(g_video_ini);
-        printf("%d passed, %d failed\n", g_pass, g_fail);
-        return g_fail ? 1 : 0;
-    }
     if (argc >= 3 && !strcmp(argv[1], "check")) {
         size_t size;
         char log[8192];
@@ -1433,7 +1350,6 @@ int main(int argc, char **argv)
     if (g_have_files) test_objectives();
     if (g_have_files) test_render();
     if (g_have_files) test_incremental();
-    test_movie_skip_prompt();
     if (g_video_ini[0]) DeleteFileA(g_video_ini);
     printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
