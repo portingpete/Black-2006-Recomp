@@ -22,6 +22,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path third_party -Force | Out-Null
           git clone https://github.com/sp00nznet/xboxrecomp.git third_party/xboxrecomp
           if ($LASTEXITCODE -ne 0) { throw 'Runtime clone failed' }
           git -C third_party/xboxrecomp checkout --detach 766ecefcd7fb2a9b344de8ec891f6fe9ea14261b

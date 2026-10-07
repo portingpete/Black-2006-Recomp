@@ -26,6 +26,19 @@ add_executable(${PROJECT_NAME} WIN32
     src/recomp_manual.c
     ${RECOMP_GEN_SOURCES}
 )
+option(RECOMP_ICALL_FEEDBACK "Record indirect call targets for the next generation pass" OFF)
+option(RECOMP_TRACE_UNRESOLVED_STUBS "Log unresolved guest call targets and state" OFF)
+if(RECOMP_ICALL_FEEDBACK)
+    target_compile_definitions(xbox_kernel PRIVATE
+        RECOMP_ICALL_FEEDBACK
+        RECOMP_ICALL_FEEDBACK_PATH=\"local/icall_targets.dump\")
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+        RECOMP_ICALL_FEEDBACK
+        RECOMP_ICALL_FEEDBACK_PATH=\"local/icall_targets.dump\")
+endif()
+if(RECOMP_TRACE_UNRESOLVED_STUBS)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE RECOMP_TRACE_UNRESOLVED_STUBS)
+endif()
 target_include_directories(${PROJECT_NAME} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/recomp"

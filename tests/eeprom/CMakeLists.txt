@@ -1,0 +1,21 @@
+cmake_minimum_required(VERSION 3.20)
+project(eeprom_query_test LANGUAGES C)
+if(NOT WIN32)
+    message(FATAL_ERROR "The kernel EEPROM regression requires Windows.")
+endif()
+set(XBOXRECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/xboxrecomp"
+    CACHE PATH "Patched XboxRecomp source")
+add_executable(eeprom-query-test test_eeprom.c
+    "${XBOXRECOMP_DIR}/src/kernel/kernel_xbox.c")
+target_include_directories(eeprom-query-test PRIVATE
+    "${XBOXRECOMP_DIR}/src/kernel" "${XBOXRECOMP_DIR}/src")
+target_compile_definitions(eeprom-query-test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+set_property(TARGET eeprom-query-test PROPERTY C_STANDARD 11)
+set_property(TARGET eeprom-query-test PROPERTY C_STANDARD_REQUIRED ON)
+if(MSVC)
+    target_compile_options(eeprom-query-test PRIVATE /W4 /UNDEBUG)
+else()
+    target_compile_options(eeprom-query-test PRIVATE -Wall -Wextra -UNDEBUG)
+endif()
+enable_testing()
+add_test(NAME eeprom-query COMMAND eeprom-query-test)

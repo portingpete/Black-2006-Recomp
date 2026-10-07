@@ -40,6 +40,7 @@
 
 /* xboxrecomp runtime headers */
 #include <xbox/xboxrecomp.h>
+#include "recomp_icall_feedback.h"
 
 /*
  * If xboxrecomp.h is not an umbrella header in your setup, include
@@ -433,6 +434,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     /* Unbuffered output for immediate visibility during debugging */
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
+    RECOMP_ICALL_FEEDBACK_INIT();
 
     printf("=== BLACK - Static Recompilation ===\n");
     printf("Loading XBE...\n");

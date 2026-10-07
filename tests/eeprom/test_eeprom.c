@@ -1,0 +1,69 @@
+#include "kernel.h"
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+
+static unsigned int warning_count;
+
+void xbox_log(int level, const char* subsystem, const char* fmt, ...)
+{
+    (void)subsystem;
+    (void)fmt;
+    if (level == XBOX_LOG_WARN)
+        ++warning_count;
+}
+
+static int check(int condition, const char* message)
+{
+    if (!condition) {
+        fprintf(stderr, "FAIL: %s\n", message);
+        return 1;
+    }
+    return 0;
+}
+
+static ULONG checksum(const unsigned char* bytes, size_t length)
+{
+    uint64_t sum = 0;
+    size_t i;
+    for (i = 0; i + 4 <= length; i += 4) {
+        ULONG word;
+        memcpy(&word, bytes + i, 4);
+        sum += word;
+        if (sum > 0xFFFFFFFFu)
+            sum = (sum & 0xFFFFFFFFu) + 1u;
+    }
+    return ~(ULONG)sum;
+}
+
+static ULONG read_u32(const unsigned char* bytes)
+{
+    ULONG value;
+    memcpy(&value, bytes, sizeof(value));
+    return value;
+}
+
+int main(void)
+{
+    unsigned char eeprom[256];
+    ULONG type = 0, length = 0;
+    unsigned int failures = 0;
+
+    memset(eeprom, 0xA5, sizeof(eeprom));
+    NTSTATUS status = xbox_ExQueryNonVolatileSetting(
+        0xFFFF, &type, eeprom, sizeof(eeprom), &length);
+
+    failures += check(status == STATUS_SUCCESS, "full EEPROM query succeeds");
+    failures += check(type == 3, "full EEPROM is reported as REG_BINARY");
+    failures += check(length == sizeof(eeprom), "full EEPROM reports 256 bytes");
+    failures += check(eeprom[0x90] == 1, "default EEPROM contains English language setting");
+    failures += check(eeprom[0x94] == (XC_VIDEO_FLAGS_WIDESCREEN | XC_VIDEO_FLAGS_HDTV),
+                      "default EEPROM contains the modeled video flags");
+    failures += check(eeprom[0x98] == 0, "default EEPROM contains stereo audio setting");
+    failures += check(read_u32(eeprom + 0x30) == checksum(eeprom + 0x34, 0x2C),
+                      "factory checksum matches virtual factory section");
+    failures += check(read_u32(eeprom + 0x60) == checksum(eeprom + 0x64, 0x5C),
+                      "user checksum matches virtual settings section");
+    failures += check(warning_count == 0, "full query does not emit an unhandled-index warning");
+    return failures ? 1 : 0;
+}
