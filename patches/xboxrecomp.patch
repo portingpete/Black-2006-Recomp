@@ -2879,7 +2879,7 @@ index 90060bd..a7a837a 100644
  
  add_library(xbox_kernel STATIC ${KERNEL_SOURCES})
 diff --git a/src/kernel/kernel.h b/src/kernel/kernel.h
-index e515377..d37115e 100644
+index e515377..1da5904 100644
 --- a/src/kernel/kernel.h
 +++ b/src/kernel/kernel.h
 @@ -56,6 +56,9 @@ enum {
@@ -2892,7 +2892,15 @@ index e515377..d37115e 100644
  
  /*
   * NTSTATUS codes - guard each against Windows SDK redefinition.
-@@ -748,6 +751,8 @@ NTSTATUS __stdcall xbox_NtReleaseMutant(HANDLE MutantHandle, PLONG PreviousCount
+@@ -496,6 +499,7 @@ void xbox_kernel_set_thunk_address(uint32_t xbox_va, uint32_t count);
+  * zeroed if never configured.
+  */
+ void xbox_kernel_get_thunk_address(uint32_t *xbox_va, uint32_t *count);
++BOOL xbox_kernel_thunk_entry_is_empty(uint32_t entry);
+ 
+ extern ULONG_PTR xbox_kernel_thunk_table[XBOX_KERNEL_THUNK_TABLE_SIZE];
+ 
+@@ -748,6 +752,8 @@ NTSTATUS __stdcall xbox_NtReleaseMutant(HANDLE MutantHandle, PLONG PreviousCount
  
  LONG     __stdcall xbox_KeSetEvent(PVOID Event, LONG Increment, BOOLEAN Wait);
  NTSTATUS __stdcall xbox_KeWaitForSingleObject(PVOID Object, ULONG WaitReason, KPROCESSOR_MODE WaitMode, BOOLEAN Alertable, PLARGE_INTEGER Timeout);
@@ -2901,7 +2909,7 @@ index e515377..d37115e 100644
  NTSTATUS __stdcall xbox_KeWaitForMultipleObjects(ULONG Count, PVOID Objects[], ULONG WaitType, ULONG WaitReason, KPROCESSOR_MODE WaitMode, BOOLEAN Alertable, PLARGE_INTEGER Timeout, PVOID WaitBlockArray);
  
  BOOLEAN  __stdcall xbox_KeCancelTimer(PXBOX_KTIMER Timer);
-@@ -778,6 +783,11 @@ BOOLEAN __stdcall xbox_HalIsResetOrShutdownPending(void);
+@@ -778,6 +784,11 @@ BOOLEAN __stdcall xbox_HalIsResetOrShutdownPending(void);
  KIRQL   __fastcall xbox_KfRaiseIrql(KIRQL NewIrql);
  VOID    __fastcall xbox_KfLowerIrql(KIRQL NewIrql);
  KIRQL   __stdcall xbox_KeRaiseIrqlToDpcLevel(void);
@@ -2913,7 +2921,7 @@ index e515377..d37115e 100644
  
  VOID    __stdcall xbox_KeStallExecutionProcessor(ULONG MicroSeconds);
  LARGE_INTEGER __stdcall xbox_KeQueryPerformanceCounter(void);
-@@ -793,6 +803,22 @@ VOID    __stdcall xbox_KeBugCheckEx(ULONG BugCheckCode, ULONG_PTR Param1, ULONG_
+@@ -793,6 +804,22 @@ VOID    __stdcall xbox_KeBugCheckEx(ULONG BugCheckCode, ULONG_PTR Param1, ULONG_
  VOID    __stdcall xbox_KeInitializeInterrupt(PXBOX_KINTERRUPT Interrupt, PVOID ServiceRoutine, PVOID ServiceContext, ULONG Vector, KIRQL Irql, ULONG InterruptMode, BOOLEAN ShareVector);
  BOOLEAN __stdcall xbox_KeConnectInterrupt(PXBOX_KINTERRUPT Interrupt);
  
@@ -2936,7 +2944,15 @@ index e515377..d37115e 100644
  /* KeTickCount - exported as a data pointer, not a function */
  extern volatile ULONG xbox_KeTickCount;
  
-@@ -1021,6 +1047,12 @@ NTSTATUS __stdcall xbox_ExSaveNonVolatileSetting(ULONG ValueIndex, ULONG Type, P
+@@ -959,6 +986,7 @@ NTSTATUS __stdcall xbox_ExSaveNonVolatileSetting(ULONG ValueIndex, ULONG Type, P
+ #define AV_OPTION_FLICKER_FILTER        0x0B
+ #define AV_OPTION_ZERO_MODE             0x0D
+ #define AV_OPTION_QUERY_MODE_CAPS       0x0E
++#define AV_OPTION_GUESS_FIELD           0x0F
+ 
+ /* ---- AV flags (for capabilities / display mode) ---- */
+ #define AV_FLAGS_HDTV_480i      0x00000001
+@@ -1021,6 +1049,12 @@ NTSTATUS __stdcall xbox_ExSaveNonVolatileSetting(ULONG ValueIndex, ULONG Type, P
  #define XC_MISC                   0x11
  #define XC_DVD_REGION             0x12
  #define XC_MAX_OS                 0xFF
@@ -2950,7 +2966,7 @@ index e515377..d37115e 100644
  /* Older spellings kept so existing call sites still build. */
  #define XC_PARENTAL_CONTROL       XC_P_CONTROL_GAMES
 diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
-index 5b56513..3dcdabe 100644
+index 5b56513..ef93e80 100644
 --- a/src/kernel/kernel_bridge.c
 +++ b/src/kernel/kernel_bridge.c
 @@ -28,6 +28,7 @@
@@ -3043,7 +3059,58 @@ index 5b56513..3dcdabe 100644
                      fprintf(stderr, "  [KERNEL] PsCreateSystemThreadEx: spawned "
                              "worker 0x%08X (ctx=0x%08X, stack top 0x%08X)\n",
                              start_routine, start_context1, stack_top);
-@@ -1217,17 +1234,30 @@ static void bridge_ExAllocatePoolWithTag(void)
+@@ -972,9 +989,48 @@ static void bridge_NtFreeVirtualMemory(void)
+     uint32_t base_ptr = STACK_ARG(0);
+     uint32_t size_ptr = STACK_ARG(1);
+     uint32_t free_type = STACK_ARG(2);
++    uint32_t base_va;
++    uint32_t size;
++
++    /* Xbox PVOID and SIZE_T are 32-bit guest values. Passing their addresses
++     * to the host NT API makes a 64-bit host read two adjacent guest fields as
++     * one pointer, then attempts to VirtualFree that invalid host address.
++     * The guest map is committed as one host region, so decommit is a no-op;
++     * MEM_RELEASE returns allocations made by the Xbox heap to that heap. */
++    if (!base_ptr || !size_ptr) {
++        g_eax = STATUS_INVALID_PARAMETER;
++        return;
++    }
++
++    base_va = BRIDGE_MEM32(base_ptr);
++    size = BRIDGE_MEM32(size_ptr);
++    if (!base_va) {
++        g_eax = STATUS_INVALID_PARAMETER;
++        return;
++    }
+ 
+-    g_eax = (uint32_t)xbox_NtFreeVirtualMemory(
+-        XBOX_TO_NATIVE(base_ptr), XBOX_TO_NATIVE(size_ptr), free_type);
++    if (free_type == MEM_DECOMMIT) {
++        if (!size || base_va < XBOX_BASE_ADDRESS ||
++            (uint64_t)base_va + size > g_xbox_total_ram) {
++            g_eax = STATUS_INVALID_PARAMETER;
++            return;
++        }
++        g_eax = STATUS_SUCCESS;
++        return;
++    }
++
++    if (free_type == MEM_RELEASE) {
++        if (size != 0 || !xbox_HeapBlockSize(base_va)) {
++            g_eax = STATUS_INVALID_PARAMETER;
++            return;
++        }
++        xbox_HeapFree(base_va);
++        BRIDGE_MEM32(base_ptr) = 0;
++        g_eax = STATUS_SUCCESS;
++        return;
++    }
++
++    g_eax = STATUS_INVALID_PARAMETER;
+ }
+ 
+ /* ── ExAllocatePool / ExAllocatePoolWithTag (ordinals 15, 16) ─
+@@ -1217,17 +1273,30 @@ static void bridge_ExAllocatePoolWithTag(void)
      g_eax = xbox_va;
  }
  
@@ -3074,7 +3141,7 @@ index 5b56513..3dcdabe 100644
      g_eax = 0;
  }
  
-@@ -1235,6 +1265,7 @@ static void bridge_KfLowerIrql(void)
+@@ -1235,6 +1304,7 @@ static void bridge_KfLowerIrql(void)
  static void bridge_KeRaiseIrqlToDpcLevel(void)
  {
      g_eax = (uint32_t)xbox_KeRaiseIrqlToDpcLevel();
@@ -3082,7 +3149,7 @@ index 5b56513..3dcdabe 100644
  }
  
  /* ── RtlInitializeCriticalSection / Enter / Leave (ordinals 291, 277, 294) ─ */
-@@ -1320,6 +1351,163 @@ static HANDLE ke_shadow_lookup(uint32_t guest_va);
+@@ -1320,6 +1390,163 @@ static HANDLE ke_shadow_lookup(uint32_t guest_va);
  static void ke_shadow_insert(uint32_t guest_va, HANDLE host);
  static HANDLE bridge_resolve_handle(uint32_t token);
  
@@ -3246,7 +3313,7 @@ index 5b56513..3dcdabe 100644
  /* ── KeSetEvent (ordinal 145) ────────────────────────────── */
  static void bridge_KeSetEvent(void)
  {
-@@ -1332,6 +1520,10 @@ static void bridge_KeSetEvent(void)
+@@ -1332,6 +1559,10 @@ static void bridge_KeSetEvent(void)
      (void)wait;
  
      h = ke_shadow_lookup(guest_va);
@@ -3257,7 +3324,7 @@ index 5b56513..3dcdabe 100644
      if (!h)
          h = bridge_resolve_handle(guest_va);
      if (!h)
-@@ -1353,6 +1545,10 @@ static void bridge_KeWaitForSingleObject(void)
+@@ -1353,6 +1584,10 @@ static void bridge_KeWaitForSingleObject(void)
      HANDLE h;
  
      h = ke_shadow_lookup(object);
@@ -3268,7 +3335,7 @@ index 5b56513..3dcdabe 100644
      if (!h)
          h = bridge_resolve_handle(object);
      if (!h)
-@@ -1823,10 +2019,10 @@ static int kernel_run_dpc(uint32_t dpc_va, uint32_t arg1, uint32_t arg2)
+@@ -1823,10 +2058,10 @@ static int kernel_run_dpc(uint32_t dpc_va, uint32_t arg1, uint32_t arg2)
   * ran -- the same failure as an unqueued DPC, and just as quiet: the driver
   * asks for exclusive access, is told it did not get it, and skips the work.
   *
@@ -3283,7 +3350,7 @@ index 5b56513..3dcdabe 100644
   */
  static void bridge_KeSynchronizeExecution(void)
  {
-@@ -1848,8 +2044,17 @@ static void bridge_KeSynchronizeExecution(void)
+@@ -1848,8 +2083,17 @@ static void bridge_KeSynchronizeExecution(void)
       * the dummy return address and the argument, so g_esp needs no fixup. */
      g_esp -= 4; BRIDGE_MEM32(g_esp) = context;
      g_esp -= 4; BRIDGE_MEM32(g_esp) = 0;
@@ -3303,7 +3370,7 @@ index 5b56513..3dcdabe 100644
  }
  
  /* -- KeRemoveQueueDpc (ordinal 137) ------------------------
-@@ -1878,9 +2083,12 @@ static void bridge_KeRemoveQueueDpc(void)
+@@ -1878,9 +2122,12 @@ static void bridge_KeRemoveQueueDpc(void)
   * Queued properly now, and drained by the timer thread, which is the one thread
   * here that already has a guest stack and a TIB and runs nothing else urgent.
   *
@@ -3319,7 +3386,7 @@ index 5b56513..3dcdabe 100644
   */
  #define XBOX_MAX_PENDING_DPC 64
  typedef struct { uint32_t dpc, arg1, arg2; } PendingDpc;
-@@ -1923,6 +2131,29 @@ static void bridge_KeInsertQueueDpc(void)
+@@ -1923,6 +2170,29 @@ static void bridge_KeInsertQueueDpc(void)
   */
  uint32_t xbox_GetConnectedInterrupt(uint32_t vector);   /* defined below */
  
@@ -3349,7 +3416,7 @@ index 5b56513..3dcdabe 100644
  static int kernel_raise_interrupt(uint32_t vector)
  {
      uint32_t kint = xbox_GetConnectedInterrupt(vector);
-@@ -1943,7 +2174,18 @@ static int kernel_raise_interrupt(uint32_t vector)
+@@ -1943,7 +2213,18 @@ static int kernel_raise_interrupt(uint32_t vector)
      g_esp -= 4; BRIDGE_MEM32(g_esp) = context;
      g_esp -= 4; BRIDGE_MEM32(g_esp) = kint;
      g_esp -= 4; BRIDGE_MEM32(g_esp) = 0;
@@ -3369,7 +3436,7 @@ index 5b56513..3dcdabe 100644
      return (int)(g_eax & 1u);
  }
  
-@@ -1961,10 +2203,16 @@ static int kernel_raise_interrupt(uint32_t vector)
+@@ -1961,10 +2242,16 @@ static int kernel_raise_interrupt(uint32_t vector)
   * bit 24 to say the PCRTC block is the source. Without those the handler looks,
   * finds nothing, and correctly declines.
   *
@@ -3390,7 +3457,7 @@ index 5b56513..3dcdabe 100644
   */
  #define XBOX_NV2A_REG_BASE     0xFD000000u
  #define NV2A_PMC_INTR_0        0x00000100u
-@@ -1973,25 +2221,103 @@ static int kernel_raise_interrupt(uint32_t vector)
+@@ -1973,25 +2260,103 @@ static int kernel_raise_interrupt(uint32_t vector)
  #define NV2A_PCRTC_INTR_VBLANK (1u << 0)
  #define NV2A_VECTOR            3u
  
@@ -3503,7 +3570,7 @@ index 5b56513..3dcdabe 100644
      BRIDGE_MEM32(XBOX_NV2A_REG_BASE + NV2A_PCRTC_INTR_0) |= NV2A_PCRTC_INTR_VBLANK;
      BRIDGE_MEM32(XBOX_NV2A_REG_BASE + NV2A_PMC_INTR_0)   |= NV2A_PMC_INTR_PCRTC;
  
-@@ -2006,16 +2332,86 @@ static void kernel_vblank_tick(void)
+@@ -2006,16 +2371,86 @@ static void kernel_vblank_tick(void)
      }
  }
  
@@ -3590,7 +3657,7 @@ index 5b56513..3dcdabe 100644
  }
  
  /* ── KeInitializeDpc (ordinal 107) ────────────────────────
-@@ -2044,18 +2440,20 @@ static void bridge_KeInitializeDpc(void)
+@@ -2044,18 +2479,20 @@ static void bridge_KeInitializeDpc(void)
  /* ── NV2A interrupt plumbing (ordinals 44, 98, 109) ───────
   *
   * The D3D8 library linked into a title installs an ISR for the GPU's vblank /
@@ -3617,7 +3684,7 @@ index 5b56513..3dcdabe 100644
  
  /* ULONG HalGetInterruptVector(ULONG BusInterruptLevel, PKIRQL Irql) */
  static void bridge_HalGetInterruptVector(void)
-@@ -2098,7 +2496,6 @@ static void bridge_KeInitializeInterrupt(void)
+@@ -2098,7 +2535,6 @@ static void bridge_KeInitializeInterrupt(void)
   * A small fixed table rather than a list: an Xbox has 26 interrupt vectors and
   * a title connects a handful, so the whole thing is smaller than the comment.
   */
@@ -3625,7 +3692,7 @@ index 5b56513..3dcdabe 100644
  static uint32_t g_connected_isr[XBOX_MAX_VECTORS];   /* KINTERRUPT guest VA */
  
  /* BOOLEAN KeConnectInterrupt(PKINTERRUPT Interrupt) */
-@@ -2115,6 +2512,9 @@ static void bridge_KeConnectInterrupt(void)
+@@ -2115,6 +2551,9 @@ static void bridge_KeConnectInterrupt(void)
                      vector, BRIDGE_MEM32(interrupt_va + 0),
                      BRIDGE_MEM32(interrupt_va + 4));
              fflush(stderr);
@@ -3635,7 +3702,7 @@ index 5b56513..3dcdabe 100644
          }
      }
      g_eax = 1;  /* connected -- see the note above */
-@@ -2127,6 +2527,46 @@ uint32_t xbox_GetConnectedInterrupt(uint32_t vector)
+@@ -2127,6 +2566,46 @@ uint32_t xbox_GetConnectedInterrupt(uint32_t vector)
      return (vector < XBOX_MAX_VECTORS) ? g_connected_isr[vector] : 0;
  }
  
@@ -3682,7 +3749,7 @@ index 5b56513..3dcdabe 100644
  /* ── MmClaimGpuInstanceMemory (ordinal 168) ───────────────
   * PVOID MmClaimGpuInstanceMemory(SIZE_T NumberOfBytes, SIZE_T *Padding)
   *
-@@ -2236,11 +2676,16 @@ static XboxTimer g_timers[XBOX_MAX_TIMERS];
+@@ -2236,11 +2715,16 @@ static XboxTimer g_timers[XBOX_MAX_TIMERS];
  static CRITICAL_SECTION g_timer_lock;
  static int g_timer_started;
  
@@ -3699,7 +3766,7 @@ index 5b56513..3dcdabe 100644
      if (slot < 0) {
          fprintf(stderr, "  [KERNEL] timer thread has no worker stack; "
                          "timer DPCs will not run\n");
-@@ -2265,11 +2710,76 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
+@@ -2265,11 +2749,76 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
  
      for (;;) {
          long long now;
@@ -3781,7 +3848,7 @@ index 5b56513..3dcdabe 100644
          now = (long long)GetTickCount64();
  
          for (i = 0; i < XBOX_MAX_TIMERS; i++) {
-@@ -2288,23 +2798,41 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
+@@ -2288,23 +2837,41 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
                  g_timers[i].timer_va = 0;      /* one-shot, done */
              LeaveCriticalSection(&g_timer_lock);
  
@@ -3834,7 +3901,7 @@ index 5b56513..3dcdabe 100644
  /* Shared by KeSetTimer and KeSetTimerEx; period is 0 for the former. */
  static void kernel_set_timer(uint32_t timer_va, long long due_100ns,
                               long period_ms, uint32_t dpc_va)
-@@ -2313,11 +2841,7 @@ static void kernel_set_timer(uint32_t timer_va, long long due_100ns,
+@@ -2313,11 +2880,7 @@ static void kernel_set_timer(uint32_t timer_va, long long due_100ns,
      int i, free_slot = -1;
      uint32_t was_set = 0;
  
@@ -3847,7 +3914,7 @@ index 5b56513..3dcdabe 100644
  
      EnterCriticalSection(&g_timer_lock);
      for (i = 0; i < XBOX_MAX_TIMERS; i++) {
-@@ -2614,6 +3138,70 @@ static int bridge_is_cdrom_device(const char *path)
+@@ -2614,6 +3177,70 @@ static int bridge_is_cdrom_device(const char *path)
      return _stricmp(path, "\\Device\\CdRom0") == 0;
  }
  
@@ -3918,7 +3985,7 @@ index 5b56513..3dcdabe 100644
  /* Open a file by delegating to the ported xbox_NtCreateFile kernel HLE. */
  static NTSTATUS bridge_create_file_impl(
      uint32_t handle_va, ACCESS_MASK access, uint32_t obj_attrs_va,
-@@ -2632,6 +3220,14 @@ static NTSTATUS bridge_create_file_impl(
+@@ -2632,6 +3259,14 @@ static NTSTATUS bridge_create_file_impl(
          return STATUS_OBJECT_PATH_NOT_FOUND;
      }
  
@@ -3933,7 +4000,7 @@ index 5b56513..3dcdabe 100644
      if (bridge_is_cdrom_device(name.Buffer)) {
          fprintf(stderr, "  [FILE] %s -> synthetic DVD device handle\n",
                  name.Buffer);
-@@ -3068,6 +3664,16 @@ static void bridge_NtReadFile(void)
+@@ -3068,6 +3703,16 @@ static void bridge_NtReadFile(void)
                      got > 2 ? p[2] : 0, got > 3 ? p[3] : 0);
          fflush(stderr);
      }
@@ -3950,7 +4017,7 @@ index 5b56513..3dcdabe 100644
      bridge_write_iostatus(iostatus, ios.Status, (uint32_t)ios.Information);
      bridge_complete_file_io(STACK_ARG(1), STACK_ARG(2), STACK_ARG(3),
                              iostatus);
-@@ -6576,6 +7182,10 @@ static void bridge_KeResetEvent(void)
+@@ -6576,6 +7221,10 @@ static void bridge_KeResetEvent(void)
      HANDLE h;
  
      h = ke_shadow_lookup(guest_va);
@@ -3961,7 +4028,7 @@ index 5b56513..3dcdabe 100644
      if (!h)
          h = XBOX_TO_NATIVE(guest_va);
      if (h)
-@@ -6753,7 +7363,9 @@ static void bridge_KeLeaveCriticalRegion(void)
+@@ -6753,7 +7402,9 @@ static void bridge_KeLeaveCriticalRegion(void)
  /* --- KeRaiseIrqlToSynchLevel (ordinal 130, 0 args = 0 bytes) --- */
  static void bridge_KeRaiseIrqlToSynchLevel(void)
  {
@@ -3972,7 +4039,7 @@ index 5b56513..3dcdabe 100644
  }
  
  /* --- KeRemoveByKeyDeviceQueue (ordinal 133, 2 args = 8 bytes) --- */
-@@ -6808,6 +7420,11 @@ static void bridge_KeSetEventBoostPriority(void)
+@@ -6808,6 +7459,11 @@ static void bridge_KeSetEventBoostPriority(void)
      (void)increment;
  
      h = ke_shadow_lookup(guest_va);
@@ -3984,7 +4051,7 @@ index 5b56513..3dcdabe 100644
      if (!h)
          h = XBOX_TO_NATIVE(guest_va);
      if (h)
-@@ -6853,11 +7470,11 @@ static void bridge_KiUnlockDispatcherDatabase(void)
+@@ -6853,11 +7509,11 @@ static void bridge_KiUnlockDispatcherDatabase(void)
  }
  
  /* --- KeGetCurrentIrql (ordinal 103, 0 args = 0 bytes)
@@ -3999,7 +4066,7 @@ index 5b56513..3dcdabe 100644
  }
  
  /* --- KeGetCurrentThread (ordinal 104, 0 args = 0 bytes) --- */
-@@ -7260,6 +7877,8 @@ static void bridge_ObReferenceObjectByPointer(void)
+@@ -7260,6 +7916,8 @@ static void bridge_ObReferenceObjectByPointer(void)
  static void bridge_PsCreateSystemThread(void)
  {
      uint32_t xbox_handle_ptr = STACK_ARG(0);
@@ -4008,7 +4075,7 @@ index 5b56513..3dcdabe 100644
      uint32_t start_context1  = STACK_ARG(4);
      uint32_t start_context2  = STACK_ARG(5);
      uint32_t start_routine   = STACK_ARG(6);
-@@ -7271,6 +7890,9 @@ static void bridge_PsCreateSystemThread(void)
+@@ -7271,6 +7929,9 @@ static void bridge_PsCreateSystemThread(void)
      /* Fake handle until the worker path can write a real one. */
      if (xbox_handle_ptr)
          BRIDGE_MEM32(xbox_handle_ptr) = 0xBEEF0002;
@@ -4018,7 +4085,7 @@ index 5b56513..3dcdabe 100644
  
      if (start_routine) {
          recomp_func_t fn = recomp_lookup(start_routine);
-@@ -7297,7 +7919,8 @@ static void bridge_PsCreateSystemThread(void)
+@@ -7297,7 +7958,8 @@ static void bridge_PsCreateSystemThread(void)
                      bridge_run_thread_inline(fn, start_context1, start_context2);
                  } else {
                      HANDLE th = bridge_spawn_thread(fn, start_context1,
@@ -4028,7 +4095,7 @@ index 5b56513..3dcdabe 100644
                      if (xbox_handle_ptr && th)
                          bridge_write_handle(xbox_handle_ptr, th);
                  }
-@@ -8811,6 +9434,222 @@ static void kernel_watch_arm_once(void)
+@@ -8811,6 +9473,222 @@ static void kernel_watch_arm_once(void)
  /* Current dispatching slot */
  static RECOMP_TLS int g_kernel_dispatch_slot = -1;
  
@@ -4251,7 +4318,7 @@ index 5b56513..3dcdabe 100644
  static void kernel_thunk_dispatch(void)
  {
      int slot = g_kernel_dispatch_slot;
-@@ -8885,6 +9724,28 @@ static void kernel_thunk_dispatch(void)
+@@ -8885,6 +9763,28 @@ static void kernel_thunk_dispatch(void)
       * section above all -- can then say which guest call site is holding the
       * lock, which is the one fact a deadlock report otherwise lacks. */
      g_xbox_kernel_caller = g_esp ? BRIDGE_MEM32(g_esp) : 0;
@@ -4280,7 +4347,7 @@ index 5b56513..3dcdabe 100644
      g_esp += 4;
  
      /* Name the bridge that corrupts a watched dword.
-@@ -8918,7 +9779,33 @@ static void kernel_thunk_dispatch(void)
+@@ -8918,7 +9818,33 @@ static void kernel_thunk_dispatch(void)
      }
  
      if (bridge) {
@@ -4314,7 +4381,7 @@ index 5b56513..3dcdabe 100644
      } else {
          /* No specific bridge - return 0. Warn once per ordinal rather than
           * gating on g_kernel_call_count: a missing bridge is rare and is
-@@ -8947,6 +9834,9 @@ static void kernel_thunk_dispatch(void)
+@@ -8947,6 +9873,9 @@ static void kernel_thunk_dispatch(void)
          g_eax = 0;
      }
  
@@ -4324,8 +4391,37 @@ index 5b56513..3dcdabe 100644
      /* Clean stdcall args from the simulated stack.
       * On real x86, stdcall callee does "ret N" to pop the return address
       * and N bytes of arguments. We already popped the dummy return address
+@@ -9081,7 +10010,8 @@ void xbox_kernel_bridge_init(void)
+         uint32_t va = g_thunk_table_base + i * 4;
+         uint32_t current = BRIDGE_MEM32(va);
+ 
+-        if (current & 0x80000000) {
++        if (!xbox_kernel_thunk_entry_is_empty(current) &&
++            (current & 0x80000000)) {
+             /* Read the actual ordinal from Xbox memory, then translate it into
+              * the kernel's canonical ordinal space. Identity unless the title
+              * set a remap (a different XDK). Every routing decision below --
+@@ -9154,9 +10084,17 @@ void xbox_kernel_bridge_init(void)
+             uint32_t current = BRIDGE_MEM32(va);
+             int slot;
+ 
+-            if (!(current & 0x80000000)) {
++            if (xbox_kernel_thunk_entry_is_empty(current) ||
++                !(current & 0x80000000)) {
+                 continue;            /* NULL separator or ordinary data */
+             }
++            /* This is a heuristic scan through bytes outside the header-
++             * declared import run. A marker bit alone is not sufficient:
++             * arbitrary XPP/data words can have it set. Xbox kernel import
++             * ordinals must index the kernel export table. */
++            if ((current & 0x7FFFFFFFu) >= XBOX_KERNEL_THUNK_TABLE_SIZE) {
++                continue;
++            }
+             slot = g_thunk_table_count + i;   /* park these above the main run */
+             if (slot >= XBOX_KERNEL_THUNK_TABLE_SIZE) {
+                 break;
 diff --git a/src/kernel/kernel_hal.c b/src/kernel/kernel_hal.c
-index 842f99c..289938a 100644
+index 842f99c..0391f4d 100644
 --- a/src/kernel/kernel_hal.c
 +++ b/src/kernel/kernel_hal.c
 @@ -24,12 +24,106 @@
@@ -4462,6 +4558,20 @@ index 842f99c..289938a 100644
      g_current_irql = DISPATCH_LEVEL;
      return old;
  }
+@@ -480,6 +577,13 @@ VOID __stdcall xbox_AvSendTVEncoderOption(
+                 | AV_FLAGS_60Hz;
+         break;
+ 
++    case AV_OPTION_GUESS_FIELD:
++        /* The Xbox query is for interlaced field parity. The host output is
++         * progressive, so it has no alternating fields; keep the guest's
++         * field value stable at zero. */
++        *Result = 0;
++        break;
++
+     case AV_OPTION_SET_MODE:
+         g_av_display_mode = Param;
+         *Result = 0;
 diff --git a/src/kernel/kernel_memory.c b/src/kernel/kernel_memory.c
 index e49a219..b93ee2b 100644
 --- a/src/kernel/kernel_memory.c
@@ -4501,11 +4611,159 @@ index 21f75d1..0fb6d85 100644
  {
      if (!Timeout)
          return INFINITE;
+diff --git a/src/kernel/kernel_thunks.c b/src/kernel/kernel_thunks.c
+index 4fd7692..0ab0e1b 100644
+--- a/src/kernel/kernel_thunks.c
++++ b/src/kernel/kernel_thunks.c
+@@ -32,6 +32,13 @@ extern ptrdiff_t g_xbox_mem_offset;
+ 
+ ULONG_PTR xbox_kernel_thunk_table[XBOX_KERNEL_THUNK_TABLE_SIZE] = {0};
+ 
++/* Both 0 and 0x80000000 denote an unused slot: the latter has the import
++ * marker bit set but its ordinal is zero, which is not a kernel export. */
++BOOL xbox_kernel_thunk_entry_is_empty(uint32_t entry)
++{
++    return entry == 0 || (entry & 0x7FFFFFFFu) == 0;
++}
++
+ /* ============================================================================
+  * Logging Implementation
+  * ============================================================================ */
+@@ -348,7 +355,7 @@ ULONG_PTR xbox_resolve_ordinal(ULONG ordinal)
+  * runtime -- it exists to keep the table populated when there is no XBE.
+  * ============================================================================ */
+ 
+-static const ULONG g_thunk_ordinals[XBOX_KERNEL_THUNK_TABLE_SIZE] = {
++static const ULONG g_thunk_ordinals[] = {
+       1,   2,   3,   4,   8,  15,  16,  17,  23,  24,   /* 0-9   */
+      40,  41,  42,  44,  46,  47,  49,  62,  65,  67,   /* 10-19 */
+      69,  71,  74,  81,  83,  84,  85,  86,  87,  95,   /* 20-29 */
+@@ -397,6 +404,10 @@ void xbox_kernel_init(void)
+     ULONG unresolved = 0;
+     uint32_t thunk_base = 0;
+     uint32_t thunk_count = 0;
++    const ULONG fallback_count =
++        (ULONG)(sizeof(g_thunk_ordinals) / sizeof(g_thunk_ordinals[0]));
++    ULONG active_count;
++    BOOL use_xbe_thunks;
+ 
+     /* Initialize logging */
+     InitializeCriticalSection(&g_log_cs);
+@@ -427,13 +438,23 @@ void xbox_kernel_init(void)
+      * bridge reads). That makes the table match any title's import order.
+      * Without a mapped XBE, fall back to the static reference list below. */
+     xbox_kernel_get_thunk_address(&thunk_base, &thunk_count);
+-    for (ULONG i = 0; i < XBOX_KERNEL_THUNK_TABLE_SIZE; i++) {
++    use_xbe_thunks = thunk_base && thunk_count && xbox_GetMemoryBase();
++    active_count = use_xbe_thunks ? thunk_count : fallback_count;
++    if (active_count > XBOX_KERNEL_THUNK_TABLE_SIZE) {
++        xbox_log(XBOX_LOG_WARN, XBOX_LOG_THUNK,
++            "Thunk table has %u entries; clamping to capacity %u",
++            active_count, XBOX_KERNEL_THUNK_TABLE_SIZE);
++        active_count = XBOX_KERNEL_THUNK_TABLE_SIZE;
++    }
++
++    for (ULONG i = 0; i < active_count; i++) {
+         ULONG ordinal;
+ 
+-        if (thunk_base && i < thunk_count && xbox_GetMemoryBase()) {
++        if (use_xbe_thunks) {
+             uint32_t entry = *(volatile uint32_t *)
+                 ((uintptr_t)(thunk_base + i * 4) + g_xbox_mem_offset);
+-            if (entry == 0) {
++            if (xbox_kernel_thunk_entry_is_empty(entry)) {
++                active_count = i;
+                 break;  /* rest of the table is empty */
+             }
+             ordinal = entry & 0x7FFFFFFF;
+@@ -455,7 +476,7 @@ void xbox_kernel_init(void)
+ 
+     xbox_log(XBOX_LOG_INFO, XBOX_LOG_THUNK,
+         "Thunk table: %u/%u resolved, %u unresolved",
+-        resolved, XBOX_KERNEL_THUNK_TABLE_SIZE, unresolved);
++        resolved, active_count, unresolved);
+ 
+     if (unresolved > 0) {
+         xbox_log(XBOX_LOG_WARN, XBOX_LOG_THUNK,
 diff --git a/src/kernel/kernel_xbox.c b/src/kernel/kernel_xbox.c
-index 4ebdfb9..613d991 100644
+index 4ebdfb9..60b3444 100644
 --- a/src/kernel/kernel_xbox.c
 +++ b/src/kernel/kernel_xbox.c
-@@ -193,6 +193,28 @@ NTSTATUS __stdcall xbox_ExQueryNonVolatileSetting(
+@@ -72,6 +72,56 @@ XBOX_ANSI_STRING xbox_XeImageFileName = {
+ static XBOX_LAUNCH_DATA_PAGE g_launch_data_page = {0};
+ XBOX_LAUNCH_DATA_PAGE* xbox_LaunchDataPage = &g_launch_data_page;
+ 
++/* The Windows recomp has no per-console EEPROM identity to expose. Return a
++ * stable virtual image for full-image queries, matching the settings exposed
++ * individually below; private/factory identity bytes remain zero. */
++static ULONG xbox_eeprom_checksum(const UCHAR* bytes, size_t length)
++{
++    uint64_t sum = 0;
++    size_t i;
++
++    for (i = 0; i + sizeof(ULONG) <= length; i += sizeof(ULONG)) {
++        ULONG word;
++        memcpy(&word, bytes + i, sizeof(word));
++        sum += word;
++        if (sum > 0xFFFFFFFFu) {
++            sum = (sum & 0xFFFFFFFFu) + 1u;
++        }
++    }
++    return ~(ULONG)sum;
++}
++
++static void xbox_make_default_eeprom(UCHAR image[256])
++{
++    LONG timezone_bias = -300;
++    ULONG language = 1;
++    ULONG video = XC_VIDEO_FLAGS_WIDESCREEN | XC_VIDEO_FLAGS_HDTV;
++    ULONG audio = 0;
++    ULONG parental = 0;
++    ULONG dvd_region = 1;
++    ULONG av_region = 0x00400100;
++    ULONG game_region = 1;
++
++    memset(image, 0, 256);
++    memcpy(image + 0x2C, &game_region, sizeof(game_region));
++    memcpy(image + 0x58, &av_region, sizeof(av_region));
++    memcpy(image + 0x64, &timezone_bias, sizeof(timezone_bias));
++    memcpy(image + 0x90, &language, sizeof(language));
++    memcpy(image + 0x94, &video, sizeof(video));
++    memcpy(image + 0x98, &audio, sizeof(audio));
++    memcpy(image + 0x9C, &parental, sizeof(parental));
++    memcpy(image + 0xA4, &parental, sizeof(parental));
++    memcpy(image + 0xBC, &dvd_region, sizeof(dvd_region));
++
++    /* Checksums cover the documented factory and user configuration spans. */
++    {
++        ULONG factory_checksum = xbox_eeprom_checksum(image + 0x34, 0x2C);
++        ULONG user_checksum = xbox_eeprom_checksum(image + 0x64, 0x5C);
++        memcpy(image + 0x30, &factory_checksum, sizeof(factory_checksum));
++        memcpy(image + 0x60, &user_checksum, sizeof(user_checksum));
++    }
++}
++
+ /* ============================================================================
+  * Section Loading
+  *
+@@ -134,6 +184,16 @@ NTSTATUS __stdcall xbox_ExQueryNonVolatileSetting(
+     xbox_log(XBOX_LOG_DEBUG, XBOX_LOG_XBOX,
+         "ExQueryNonVolatileSetting: index=0x%02X len=%u", ValueIndex, ValueLength);
+ 
++    if (ValueIndex == 0xFFFF) {
++        UCHAR image[256];
++        ULONG copy_length = ValueLength < sizeof(image) ? ValueLength : (ULONG)sizeof(image);
++        xbox_make_default_eeprom(image);
++        memcpy(Value, image, copy_length);
++        if (Type) *Type = 3; /* REG_BINARY */
++        if (ResultLength) *ResultLength = sizeof(image);
++        return STATUS_SUCCESS;
++    }
++
+     switch (ValueIndex) {
+     case XC_LANGUAGE:
+         /* English = 1 */
+@@ -193,6 +253,28 @@ NTSTATUS __stdcall xbox_ExQueryNonVolatileSetting(
          }
          break;
  
@@ -36137,6 +36395,275 @@ index 0000000..6affd56
 +    free(page);
 +    return ok;
 +}
+diff --git a/src/video/pc_movie_skip.c b/src/video/pc_movie_skip.c
+new file mode 100644
+index 0000000..e4a5da3
+--- /dev/null
++++ b/src/video/pc_movie_skip.c
+@@ -0,0 +1,236 @@
++/* BLACK's native XMV input. Decoder ownership and EOF stay with the guest. */
++#include "pc_movie_skip.h"
++#include "pc_menu.h"
++#include "../input/pc_input.h"
++#include <stdio.h>
++#include <string.h>
++#ifndef WIN32_LEAN_AND_MEAN
++#define WIN32_LEAN_AND_MEAN
++#endif
++#include <windows.h>
++
++#define MOVIE_LEASE_MS 500u
++#define CONFIRM_MS 3000u
++#define KEY_ESC 0x001u
++#define KEY_ENTER 0x01Cu
++#define KEY_SPACE 0x039u
++#define KEY_NUMENTER 0x11Cu
++#define KEY_F11 0x057u
++
++static SRWLOCK m_lock = SRWLOCK_INIT;
++static uint64_t m_session, m_seen, m_confirm;
++static int m_kind, m_request, m_release;
++static int m_focused = 1;
++/* Physical state survives movie transitions, so a held button cannot affect the
++ * next movie. Consumed releases also stay consumed after the movie ends. */
++static unsigned m_keys, m_pad, m_mouse;
++static unsigned char m_swallowed[0x200];
++static unsigned m_mouse_swallowed;
++static int m_pad_swallowed;
++#ifdef PC_MOVIE_SKIP_TEST
++static uint64_t m_test_now;
++void pc_movie_skip_test_time(uint64_t now) { m_test_now = now; }
++static uint64_t now_ms(void) { return m_test_now; }
++#else
++static uint64_t now_ms(void) { return GetTickCount64(); }
++#endif
++
++static void retire_locked(void)
++{
++    m_session = m_seen = m_confirm = 0;
++    m_kind = PC_MOVIE_SKIP_NONE;
++    m_request = 0;
++    m_release = (m_keys | m_pad | m_mouse) != 0;
++    pc_menu_set_movie_skip_prompt(0);
++}
++
++static int active_locked(uint64_t now)
++{
++    if (m_kind && (now < m_seen || now - m_seen > MOVIE_LEASE_MS)) retire_locked();
++    if (m_confirm && now >= m_confirm) {
++        m_confirm = 0;
++        pc_menu_set_movie_skip_prompt(0);
++    }
++    return m_kind != PC_MOVIE_SKIP_NONE;
++}
++
++static void press_locked(uint64_t now)
++{
++    if (!m_focused || !active_locked(now) || m_release || m_request) return;
++    m_release = 1;
++    if (m_kind == PC_MOVIE_SKIP_INTRO || m_confirm) {
++        m_request = 1;
++        m_confirm = 0;
++        pc_menu_set_movie_skip_prompt(0);
++        fprintf(stderr, "[MOVIE] skip requested (%s)\n",
++                m_kind == PC_MOVIE_SKIP_INTRO ? "intro" : "confirmed");
++    } else {
++        m_confirm = now + CONFIRM_MS;
++        pc_menu_set_movie_skip_prompt(1);
++        fprintf(stderr, "[MOVIE] confirmation: Press again to skip\n");
++    }
++}
++
++static void release_locked(void)
++{
++    if (!(m_keys | m_pad | m_mouse)) m_release = 0;
++}
++
++void pc_movie_skip_update(uint64_t session, int kind, int playing)
++{
++    const uint64_t now = now_ms();
++    AcquireSRWLockExclusive(&m_lock);
++    active_locked(now);
++    if (!playing || !session || kind < PC_MOVIE_SKIP_INTRO || kind > PC_MOVIE_SKIP_CUTSCENE) {
++        retire_locked();
++    } else {
++        if (m_session != session || m_kind != kind) {
++            retire_locked();
++            m_session = session;
++            m_kind = kind;
++        }
++        m_seen = now;
++    }
++    ReleaseSRWLockExclusive(&m_lock);
++}
++
++int pc_movie_skip_take_request(uint64_t session)
++{
++    int take;
++    AcquireSRWLockExclusive(&m_lock);
++    take = active_locked(now_ms()) && session == m_session && m_request;
++    if (take) retire_locked();
++    ReleaseSRWLockExclusive(&m_lock);
++    return take;
++}
++
++void pc_movie_skip_clear(void)
++{
++    AcquireSRWLockExclusive(&m_lock);
++    retire_locked();
++    ReleaseSRWLockExclusive(&m_lock);
++}
++
++int pc_movie_skip_active(void)
++{
++    int active;
++    AcquireSRWLockExclusive(&m_lock);
++    active = active_locked(now_ms());
++    ReleaseSRWLockExclusive(&m_lock);
++    return active;
++}
++
++static unsigned key_bit(unsigned id)
++{
++    switch (id) {
++    case KEY_ESC: return 1u;
++    case KEY_ENTER: return 2u;
++    case KEY_SPACE: return 4u;
++    case KEY_NUMENTER: return 8u;
++    default: return 0u;
++    }
++}
++
++static int f_key(unsigned id, int down, int repeat)
++{
++    const uint64_t now = now_ms();
++    const unsigned bit = key_bit(id);
++    int active, take;
++    if (id >= sizeof(m_swallowed) || id == KEY_F11) return 0;
++    AcquireSRWLockExclusive(&m_lock);
++    active = active_locked(now);
++    take = active || m_swallowed[id];
++    if (down) {
++        const int edge = bit && !(m_keys & bit) && !repeat;
++        m_keys |= bit;
++        if (active) m_swallowed[id] = 1;
++        if (edge) press_locked(now);
++    } else {
++        m_keys &= ~bit;
++        m_swallowed[id] = 0;
++        release_locked();
++    }
++    ReleaseSRWLockExclusive(&m_lock);
++    return take;
++}
++
++static int f_button(int button, int down)
++{
++    const uint64_t now = now_ms();
++    unsigned bit;
++    int active, take;
++    if (button < 0 || button > 4) return 0;
++    bit = 1u << button;
++    AcquireSRWLockExclusive(&m_lock);
++    active = active_locked(now);
++    take = active || (m_mouse_swallowed & bit) != 0;
++    if (down) {
++        const int edge = button == 0 && !m_mouse;
++        if (button == 0) m_mouse = 1;
++        if (active) m_mouse_swallowed |= bit;
++        if (edge) press_locked(now);
++    } else {
++        if (button == 0) m_mouse = 0;
++        m_mouse_swallowed &= ~bit;
++        release_locked();
++    }
++    ReleaseSRWLockExclusive(&m_lock);
++    return take;
++}
++
++static int f_wheel(int delta) { (void)delta; return pc_movie_skip_active(); }
++
++static int f_report(uint8_t out[20], int pad_present)
++{
++    const uint64_t now = now_ms();
++    /* Xbox report: digital START, analog A/B. A real or scripted pad
++     * enters the same filter before the guest can act on its own skip input. */
++    const unsigned down = pad_present ?
++        ((out[2] & 0x10u) ? 1u : 0u) |
++        ((out[4] > 30u) ? 2u : 0u) | ((out[5] > 30u) ? 4u : 0u) : 0u;
++    int active, take;
++    AcquireSRWLockExclusive(&m_lock);
++    active = active_locked(now);
++    take = active || (m_pad_swallowed && down);
++    {
++        const unsigned edge = down & ~m_pad;
++        m_pad = down;
++        if (active && down) m_pad_swallowed = 1;
++        if (edge) press_locked(now);
++        if (!down) m_pad_swallowed = 0;
++        release_locked();
++    }
++    ReleaseSRWLockExclusive(&m_lock);
++    return take;
++}
++
++static void f_focus(int focused)
++{
++    AcquireSRWLockExclusive(&m_lock);
++    m_focused = focused != 0;
++    m_release = 1; /* A held pad on focus return needs a fresh release. */
++    if (!focused) {
++        m_confirm = m_request = 0;
++        pc_menu_set_movie_skip_prompt(0);
++        /* Key-up may go to another window; require a fresh release on return. */
++        m_keys = m_mouse = 0;
++        m_release = 1;
++    }
++    ReleaseSRWLockExclusive(&m_lock);
++}
++
++static const PcInputFilter k_filter = { f_key, f_button, f_wheel, f_report, f_focus };
++void pc_movie_skip_install(void) { pc_input_set_filter_slot(2, &k_filter); }
++
++#ifdef PC_MOVIE_SKIP_TEST
++void pc_movie_skip_test_reset(void)
++{
++    AcquireSRWLockExclusive(&m_lock);
++    m_keys = m_pad = m_mouse = m_mouse_swallowed = 0;
++    m_pad_swallowed = 0;
++    m_focused = 1;
++    memset(m_swallowed, 0, sizeof(m_swallowed));
++    retire_locked();
++    ReleaseSRWLockExclusive(&m_lock);
++}
++#endif
+diff --git a/src/video/pc_movie_skip.h b/src/video/pc_movie_skip.h
+new file mode 100644
+index 0000000..725072f
+--- /dev/null
++++ b/src/video/pc_movie_skip.h
+@@ -0,0 +1,21 @@
++#ifndef XBOXRECOMP_PC_MOVIE_SKIP_H
++#define XBOXRECOMP_PC_MOVIE_SKIP_H
++#include <stdint.h>
++
++enum { PC_MOVIE_SKIP_NONE, PC_MOVIE_SKIP_INTRO, PC_MOVIE_SKIP_CUTSCENE };
++
++/* Game thread: refresh a playing movie's identity each pump. Zero playing or NONE
++ * retires it. A new identity always starts with an unarmed confirmation. */
++void pc_movie_skip_update(uint64_t session, int kind, int playing);
++int pc_movie_skip_take_request(uint64_t session);
++void pc_movie_skip_clear(void);
++/* Input/presenter threads: a fresh native movie currently owns input. */
++int pc_movie_skip_active(void);
++/* Install ahead of menu input filters. Called once by the presenter. */
++void pc_movie_skip_install(void);
++
++#ifdef PC_MOVIE_SKIP_TEST
++void pc_movie_skip_test_time(uint64_t now);
++void pc_movie_skip_test_reset(void);
++#endif
++#endif
 diff --git a/src/video/pc_video.c b/src/video/pc_video.c
 new file mode 100644
 index 0000000..b7b77eb
@@ -38197,10 +38724,25 @@ index 6fdf222..7495a84 100644
  int xbox_VideoIsPlaying(void) { return 0; }
  #endif
 diff --git a/templates/runtime/recomp_types.h b/templates/runtime/recomp_types.h
-index dc1dae0..03d1f25 100644
+index dc1dae0..d50ce23 100644
 --- a/templates/runtime/recomp_types.h
 +++ b/templates/runtime/recomp_types.h
-@@ -253,6 +253,59 @@ extern RECOMP_TLS uint16_t g_fp_control_word;
+@@ -162,6 +162,14 @@ extern uint32_t g_xbox_code_hi;
+ extern RECOMP_TLS uint32_t g_eax, g_ecx, g_edx, g_esp;
+ extern RECOMP_TLS uint32_t g_ebx, g_esi, g_edi;
+ 
++/* Optional BLACK diagnostic hook for unresolved call-target stubs. */
++#ifdef RECOMP_TRACE_UNRESOLVED_STUBS
++void recomp_unresolved_stub_log(uint32_t target_va);
++#define RECOMP_UNRESOLVED_STUB_HIT(va) recomp_unresolved_stub_log(va)
++#else
++#define RECOMP_UNRESOLVED_STUB_HIT(va) ((void)0)
++#endif
++
+ /* x87 stack. Per-thread for the same reason the integer registers are:
+  * arguments are passed in st(0)/st(1) across call boundaries. */
+ extern RECOMP_TLS double g_fp_stack[8];
+@@ -253,6 +261,59 @@ extern RECOMP_TLS uint16_t g_fp_control_word;
  extern RECOMP_TLS int g_fp_cmp;
  extern RECOMP_TLS uint16_t g_fp_cc;
  #define RECOMP_FCMP_CC(c) ((uint16_t)((c)==2 ? 0x4500u : (c)<0 ? 0x0100u : (c)>0 ? 0u : 0x4000u))
@@ -38260,7 +38802,7 @@ index dc1dae0..03d1f25 100644
  /* Values in the existing double-backed stack are all representable as normal
   * x87 extended values, including binary64 subnormals. Empty stack tags and
   * unsupported extended encodings are not represented by this stack model. */
-@@ -268,6 +321,10 @@ static inline uint16_t recomp_fxam(double value) {
+@@ -268,6 +329,10 @@ static inline uint16_t recomp_fxam(double value) {
   * followed by `test ah, 0x44; jp` is how this era's CRT asks "is this a NaN",
   * and collapsing it to "equal" answers no every time. */
  #define RECOMP_FCMP(a, b)     (((a) != (a) || (b) != (b)) ? 2 : (a) < (b) ? -1 : (a) > (b) ? 1 : 0)
@@ -38271,7 +38813,7 @@ index dc1dae0..03d1f25 100644
  /* x87 integer stores use the guest RC bits, independently of host rounding.
   * Masked invalid conversions store the signed integer-indefinite value. */
  static inline int64_t recomp_fist(double value, uint16_t control, unsigned bits) {
-@@ -370,10 +427,44 @@ void recomp_trace_esp(const char *name, const char *tag);
+@@ -370,10 +435,44 @@ void recomp_trace_esp(const char *name, const char *tag);
   */
  #define XBOX_PTR(addr) ((uintptr_t)(uint32_t)(addr) + g_xbox_mem_offset)
  
@@ -38316,7 +38858,7 @@ index dc1dae0..03d1f25 100644
  
  /** Signed memory reads. */
  #define SMEM8(addr)  (*(volatile int8_t   *)XBOX_PTR(addr))
-@@ -406,12 +497,14 @@ void recomp_trace_esp(const char *name, const char *tag);
+@@ -406,12 +505,14 @@ void recomp_trace_esp(const char *name, const char *tag);
  
  #ifndef RECOMP_XMM_DEFINED
  #define RECOMP_XMM_DEFINED
@@ -38331,7 +38873,7 @@ index dc1dae0..03d1f25 100644
  } RecompXmm;
  #endif
  
-@@ -420,39 +513,51 @@ extern RECOMP_TLS RecompXmm g_xmm4, g_xmm5, g_xmm6, g_xmm7;
+@@ -420,39 +521,51 @@ extern RECOMP_TLS RecompXmm g_xmm4, g_xmm5, g_xmm6, g_xmm7;
  
  /* -- construction -- */
  
@@ -38393,7 +38935,7 @@ index dc1dae0..03d1f25 100644
  }
  
  /* movlps/movhps move 8 bytes into or out of one half, leaving the
-@@ -476,79 +581,49 @@ static inline void recomp_xmm_store_half(uint32_t addr, RecompXmm src,
+@@ -476,79 +589,49 @@ static inline void recomp_xmm_store_half(uint32_t addr, RecompXmm src,
  
  /** movlhps: dst high = src low. */
  static inline RecompXmm XMM_MOVE_LOW_TO_HIGH(RecompXmm a, RecompXmm b) {
@@ -38496,7 +39038,7 @@ index dc1dae0..03d1f25 100644
  
  /* ================================================================
   * Flag computation helpers
-@@ -696,7 +771,7 @@ static inline uint16_t ROR16(uint16_t val, int n) {
+@@ -696,7 +779,7 @@ static inline uint16_t ROR16(uint16_t val, int n) {
  #define PUSH32(sp, val) do { \
      uint32_t _pv = (uint32_t)(val); \
      (sp) -= 4; \
@@ -38505,7 +39047,7 @@ index dc1dae0..03d1f25 100644
  } while(0)
  
  /**
-@@ -714,7 +789,7 @@ static inline int recomp_parity8(uint32_t x) {
+@@ -714,7 +797,7 @@ static inline int recomp_parity8(uint32_t x) {
  
  /** Pop a 32-bit value from the simulated stack. */
  #define POP32(sp, dst) do { \
@@ -38514,8 +39056,185 @@ index dc1dae0..03d1f25 100644
      (sp) += 4; \
  } while(0)
  
+diff --git a/tests/apu_mixdown/test_main.c b/tests/apu_mixdown/test_main.c
+index a2bd64c..4e22167 100644
+--- a/tests/apu_mixdown/test_main.c
++++ b/tests/apu_mixdown/test_main.c
+@@ -8,6 +8,13 @@
+ #include <stdlib.h>
+ #include <string.h>
+ 
++/* The standalone test has no kernel acknowledgement loop. The production
++ * frame entry point also calls the DSP acknowledgement directly. */
++void xbox_SetAckTick(void (*fn)(void))
++{
++    (void)fn;
++}
++
+ /* The bins a title's 3D positional voices actually land in, from JSRF's own
+  * V0BIN..V3BIN. 6 and 8 are even (left), 7 and 9 odd (right), so a mixdown
+  * that preserves the guest's stereo pairing puts signal on both channels. */
+diff --git a/tests/kernel_bridge/test_main.c b/tests/kernel_bridge/test_main.c
+index 9392fe3..a91106e 100644
+--- a/tests/kernel_bridge/test_main.c
++++ b/tests/kernel_bridge/test_main.c
+@@ -29,6 +29,7 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <io.h>
+ 
+ /* Provided by the generated title; a regression harness has no title, and a
+  * static archive resolves only what gets pulled in. Nothing here calls a
+@@ -57,8 +58,17 @@ static void check(int ok, const char *what, const char *detail)
+ int main(void)
+ {
+     setvbuf(stdout, NULL, _IONBF, 0);
++    check(xbox_kernel_thunk_entry_is_empty(0),
++          "zero-filled kernel slot is empty", "zero should terminate the import run");
++    check(xbox_kernel_thunk_entry_is_empty(0x80000000u),
++          "marked ordinal-zero kernel slot is empty",
++          "the marker bit alone must not make ordinal zero an import");
++    check(!xbox_kernel_thunk_entry_is_empty(0x80000001u),
++          "nonzero kernel ordinal remains an import",
++          "a valid encoded ordinal was mistaken for an empty slot");
+ 
+     const uint32_t THUNK_VA = 0x10000, STACK_VA = 0x20000;
++    const uint32_t BASE_PTR_VA = 0x30000, SIZE_PTR_VA = 0x30004;
+ 
+     uint8_t *mem = VirtualAlloc(NULL, 16 * 1024 * 1024,
+                                 MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+@@ -70,10 +80,35 @@ int main(void)
+     g_xbox_mem_offset = (ptrdiff_t)mem;
+ 
+     /* One import, in the form an XBE stores it: 0x80000000 | ordinal. */
++    *(uint32_t *)(mem + THUNK_VA - 0x10) = 0x80000000u | 52u;
++    *(uint32_t *)(mem + THUNK_VA - 0x20) = 0x80000000u; /* empty ordinal-zero slot */
++    *(uint32_t *)(mem + THUNK_VA - 0x30) = 0x80000000u | 1357244544u;
+     *(uint32_t *)(mem + THUNK_VA) = 0x80000000u | 173u;
+-    xbox_kernel_set_thunk_address(THUNK_VA, 1);
++    *(uint32_t *)(mem + THUNK_VA + 4) = 0x80000000u | 199u;
++    *(uint32_t *)(mem + THUNK_VA + 8) = 0x80000000u | 2u;
++    *(uint32_t *)(mem + THUNK_VA + 12) = 0x80000000u; /* unused declared slot */
++    xbox_kernel_set_thunk_address(THUNK_VA, 3);
+     xbox_kernel_bridge_init();
+ 
++    /* The bounded lookbehind exists for real XBE runs (e.g. ordinals 52,
++     * 51, and 5), but arbitrary data can also resemble a thunk marker. */
++    uint32_t valid_preceding = *(uint32_t *)(mem + THUNK_VA - 0x10);
++    uint32_t empty_preceding = *(uint32_t *)(mem + THUNK_VA - 0x20);
++    uint32_t invalid_preceding = *(uint32_t *)(mem + THUNK_VA - 0x30);
++    uint32_t empty_declared = *(uint32_t *)(mem + THUNK_VA + 12);
++    check(valid_preceding == 0xFE000000u + 7 * 4,
++          "valid preceding ordinal is bridged",
++          "ordinal 52 was not assigned lookbehind slot 7");
++    check(empty_preceding == 0x80000000u,
++          "ordinal-zero lookbehind slot remains untouched",
++          "an empty slot was treated as a kernel import");
++    check(invalid_preceding == (0x80000000u | 1357244544u),
++          "out-of-range preceding marker remains untouched",
++          "a non-kernel value was treated as an import ordinal");
++    check(empty_declared == 0x80000000u,
++          "ordinal-zero declared slot remains untouched",
++          "an empty declared slot was assigned a synthetic thunk");
++
+     /* bridge_init rewrites the entry in place to a synthetic VA. */
+     recomp_func_t fn = recomp_lookup_kernel(*(uint32_t *)(mem + THUNK_VA));
+     check(fn != NULL, "ordinal 173 resolves to a bridge entry point",
+@@ -103,6 +138,91 @@ int main(void)
+               "ordinal 173 pops its stdcall argument", detail);
+     }
+ 
++    /* Xbox uses 32-bit guest pointers and SIZE_T, even when the host is
++     * 64-bit. Decommit is a successful no-op because mapped guest RAM is
++     * already committed as one host region. */
++    *(uint32_t *)(mem + BASE_PTR_VA) = 0x00100000u;
++    *(uint32_t *)(mem + SIZE_PTR_VA) = 0x1000u;
++    uint32_t *free_sp = (uint32_t *)(mem + STACK_VA);
++    free_sp[0] = 0xBEEF0002u;
++    free_sp[1] = BASE_PTR_VA;
++    free_sp[2] = SIZE_PTR_VA;
++    free_sp[3] = MEM_DECOMMIT;
++    g_esp = STACK_VA;
++    recomp_func_t free_fn = recomp_lookup_kernel(*(uint32_t *)(mem + THUNK_VA + 4));
++    check(free_fn != NULL, "ordinal 199 resolves to a bridge entry point",
++          "the free thunk entry was not rewritten to a synthetic VA");
++    if (free_fn) {
++        free_fn();
++        check(g_eax == 0, "NtFreeVirtualMemory decommit succeeds for guest RAM",
++              "the bridge passed a 32-bit guest pointer to a host pointer API");
++        check(*(uint32_t *)(mem + BASE_PTR_VA) == 0x00100000u,
++              "NtFreeVirtualMemory decommit preserves the guest base address",
++              "decommit must not turn the base pointer into a host pointer");
++        check(g_esp == STACK_VA + 16,
++              "ordinal 199 pops its three stdcall arguments",
++              "the guest stack was not advanced by 16 bytes");
++    }
++
++    recomp_func_t av_fn = recomp_lookup_kernel(*(uint32_t *)(mem + THUNK_VA + 8));
++    check(av_fn != NULL, "ordinal 2 resolves to an AV bridge entry point", NULL);
++    if (av_fn) {
++        const uint32_t RESULT_VA = 0x40000;
++        uint32_t *av_sp = (uint32_t *)(mem + STACK_VA);
++        FILE *capture = fopen("av_option_test.log", "w");
++        int saved_stderr = _dup(_fileno(stderr));
++        check(capture != NULL && saved_stderr >= 0,
++              "AV warning capture is available", NULL);
++        if (capture && saved_stderr >= 0)
++            _dup2(_fileno(capture), _fileno(stderr));
++        av_sp[0] = 0xBEEF0003u;
++        av_sp[1] = 0;          /* RegisterBase */
++        av_sp[2] = 0x0Fu;      /* AV_OPTION_GUESS_FIELD */
++        av_sp[3] = 0;          /* Param */
++        av_sp[4] = RESULT_VA;
++        *(uint32_t *)(mem + RESULT_VA) = 0xFFFFFFFFu;
++        g_esp = STACK_VA;
++        av_fn();
++        fflush(stderr);
++        if (saved_stderr >= 0) {
++            _dup2(saved_stderr, _fileno(stderr));
++            _close(saved_stderr);
++        }
++        if (capture) fclose(capture);
++        check(*(uint32_t *)(mem + RESULT_VA) == 0,
++              "progressive output reports no interlaced field", NULL);
++        FILE *captured = fopen("av_option_test.log", "r");
++        char av_log[1024] = {0};
++        if (captured) {
++            fread(av_log, 1, sizeof(av_log) - 1, captured);
++            fclose(captured);
++        }
++        check(strstr(av_log, "AvSendTVEncoderOption: unknown option") == NULL,
++              "AV option 0x0F is recognized without an unknown-option warning",
++              "the guest uses this query while initializing D3D");
++        check(g_esp == STACK_VA + 20,
++              "ordinal 2 pops its four stdcall arguments", NULL);
++    }
++
++    xbox_kernel_init();
++    check(xbox_kernel_thunk_table[147] == 0,
++          "kernel init leaves unused fallback capacity empty",
++          "the zero-filled fallback tail was treated as ordinal 0");
++    xbox_kernel_shutdown();
++
++    FILE *kernel_log = fopen("xbox_kernel.log", "r");
++    unsigned ordinal_zero_errors = 0;
++    if (kernel_log) {
++        char line[512];
++        while (fgets(line, sizeof(line), kernel_log))
++            if (strstr(line, "Unresolved kernel ordinal 0"))
++                ordinal_zero_errors++;
++        fclose(kernel_log);
++    }
++    check(kernel_log != NULL && ordinal_zero_errors == 0,
++          "kernel init emits no false ordinal-zero errors",
++          "unused zero-filled fallback entries were resolved");
++
+     VirtualFree(mem, 0, MEM_RELEASE);
+     printf("\n%d failure(s)\n", failures);
+     return failures ? 1 : 0;
 diff --git a/tools/disasm/engine.py b/tools/disasm/engine.py
-index cfe279f..25b2fd1 100644
+index cfe279f..3b99486 100644
 --- a/tools/disasm/engine.py
 +++ b/tools/disasm/engine.py
 @@ -14,6 +14,7 @@ from capstone import Cs, CS_ARCH_X86, CS_MODE_32, CsInsn
@@ -38659,6 +39378,60 @@ index cfe279f..25b2fd1 100644
      def jump_table_entries(self, tbl: int) -> List[int]:
          """Code pointers held by a resynced jump table, or [] if unknown."""
          end = self.jump_tables.get(tbl)
+@@ -424,9 +495,23 @@ class DisasmEngine:
+ 
+         limit = addr + len(data)
+         count = 0
++        has_frame = False
+         for decoded in self._cs.disasm(data, addr):
+             count += 1
+             mnemonic = decoded.mnemonic.lower()
++            # `leave` only makes sense after a frame pointer has been set up.
++            # Executable sections can contain embedded tables; arbitrary bytes
++            # there often decode through `leave` and then into a `ret`.
++            if mnemonic == "push" and decoded.op_str.lower() == "ebp":
++                next_insn = self._cs.disasm(data[decoded.address - addr + decoded.size:],
++                                            decoded.address + decoded.size,
++                                            count=1)
++                next_insn = next(next_insn, None)
++                if (next_insn is not None and next_insn.mnemonic.lower() == "mov"
++                        and next_insn.op_str.lower() == "ebp, esp"):
++                    has_frame = True
++            if mnemonic == "leave" and not has_frame:
++                return False
+             if mnemonic in config.RET_MNEMONICS:
+                 return True
+             if mnemonic in config.JMP_MNEMONICS:
+@@ -558,7 +643,28 @@ class DisasmEngine:
+         if m == "sub" and ops.startswith("esp,"):
+             return True
+         if m == "mov" and ops.replace(" ", "") == "edi,edi":
+-            return True   # hot-patch pad
++            # The two-byte hot-patch pad is not a prologue by itself. It also
++            # occurs immediately before inline jump tables (BLACK has two such
++            # gaps), where treating it as a function start decodes table bytes
++            # as code and invents unresolved call targets. Require the bytes
++            # after the pad to have a real MSVC entry shape.
++            after = list(self._cs.disasm(
++                data[offset + first.size:offset + first.size + 16],
++                addr + first.size, count=2))
++            if not after:
++                return False
++            nxt = after[0]
++            if nxt.mnemonic == "push" and nxt.op_str == "ebp":
++                return (len(after) > 1
++                        and after[1].mnemonic in ("mov", "lea")
++                        and after[1].op_str.replace(" ", "").startswith(
++                            "ebp,"))
++            if nxt.mnemonic == "push" and nxt.op_str in (
++                    "esi", "edi", "ebx"):
++                return True
++            if nxt.mnemonic == "sub" and nxt.op_str.startswith("esp,"):
++                return True
++            return False
+ 
+         # A function whose frame __SEH_prolog builds:
+         #
 diff --git a/tools/disasm/jump_tables.py b/tools/disasm/jump_tables.py
 new file mode 100644
 index 0000000..5561776
@@ -39090,6 +39863,59 @@ index 0000000..5561776
 +    if span.start < dispatch.end_address and dispatch.address < span.end:
 +        return None
 +    return span
+diff --git a/tools/disasm/test_decode_at.py b/tools/disasm/test_decode_at.py
+index 9eba707..39fc5a7 100644
+--- a/tools/disasm/test_decode_at.py
++++ b/tools/disasm/test_decode_at.py
+@@ -30,6 +30,7 @@ class _Section:
+         self.virtual_size = len(data)
+         self.executable = executable
+         self.name = ".text"
++        self.data = data
+ 
+ 
+ class _Image:
+@@ -49,6 +50,13 @@ class _Image:
+     def get_section_data(self, section):
+         return section.data
+ 
++    def read_bytes_at_va(self, va, size):
++        section = self.get_section_at_va(va)
++        if section is None:
++            return None
++        offset = va - section.virtual_addr
++        return section.data[offset:offset + size]
++
+ 
+ def _engine(va, data, executable=True):
+     s = _Section(va, data, executable)
+@@ -150,6 +158,26 @@ def test_probe_follows_a_tail_jump():
+     assert eng.probes_as_function_body(BASE)
+ 
+ 
++def test_hotpatch_nop_needs_a_real_prologue_after_it():
++    #  mov edi,edi; push ebp; mov ebp,esp; ret
++    eng, _ = _engine(BASE, bytes.fromhex("8bff558bec c3"))
++    assert eng.probes_as_prologue(BASE)
++
++    # A hotpatch nop immediately before jump-table bytes is not a function.
++    eng, _ = _engine(BASE, bytes.fromhex("8bff 01010101010101010101"))
++    assert not eng.probes_as_prologue(BASE)
++
++
++def test_returning_body_rejects_leave_without_a_frame():
++    # WMADEC's coefficient table starts with the same pattern; the imm-ref
++    # scanner used to mistake its bytes for a callable body ending in ret.
++    eng, _ = _engine(BASE, bytes.fromhex("880fc9 bbb6c996bc c3"))
++    assert not eng.probes_as_returning_body(BASE)
++
++    eng, _ = _engine(BASE, bytes.fromhex("558bec 880f c9 c3"))
++    assert eng.probes_as_returning_body(BASE)
++
++
+ def _run():
+     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+     for fn in fns:
 diff --git a/tools/recomp/__main__.py b/tools/recomp/__main__.py
 index 55fec47..06d2342 100644
 --- a/tools/recomp/__main__.py
@@ -39118,6 +39944,199 @@ index 55fec47..06d2342 100644
          )
  
          t_translate = time.time() - t0
+diff --git a/tools/recomp/analyze_unresolved.py b/tools/recomp/analyze_unresolved.py
+index fa0a9e6..cdb4de0 100644
+--- a/tools/recomp/analyze_unresolved.py
++++ b/tools/recomp/analyze_unresolved.py
+@@ -1,5 +1,5 @@
+ #!/usr/bin/env python3
+-import json, bisect, os
++import argparse, json, bisect, os
+ 
+ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, '..', '..'))
+@@ -8,36 +8,44 @@ UNRESOLVED_PATH = os.path.join(SCRIPT_DIR, 'output', 'unresolved_symbols.txt')
+ FUNCTIONS_PATH = os.path.join(REPO_ROOT, 'tools', 'disasm', 'output', 'functions.json')
+ OUTPUT_PATH = os.path.join(SCRIPT_DIR, 'output', 'missing_functions.json')
+ 
+-SECTIONS = [
+-    {'name': '.text', 'va': 0x00011000, 'size': 2863616},
+-    {'name': 'XMV', 'va': 0x002CC200, 'size': 163124},
+-    {'name': 'DSOUND', 'va': 0x002F3F40, 'size': 52668},
+-    {'name': 'WMADEC', 'va': 0x00300D00, 'size': 105828},
+-    {'name': 'XONLINE', 'va': 0x0031AA80, 'size': 124764},
+-    {'name': 'XNET', 'va': 0x003391E0, 'size': 78056},
+-    {'name': 'D3D', 'va': 0x0034C2E0, 'size': 83828},
+-    {'name': 'XGRPH', 'va': 0x00360A60, 'size': 8300},
+-    {'name': 'XPP', 'va': 0x00362AE0, 'size': 36052},
+-    {'name': '.rdata', 'va': 0x0036B7C0, 'size': 289684},
+-    {'name': '.data', 'va': 0x003B2360, 'size': 3904988},
+-    {'name': 'DOLBY', 'va': 0x0076B940, 'size': 29056},
+-    {'name': 'XON_RD', 'va': 0x00772AC0, 'size': 5416},
+-    {'name': '.data1', 'va': 0x00774000, 'size': 224},
+-]
+-
+-TEXT_START = 0x00011000
+-TEXT_END = 0x00011000 + 2863616
+-
+-def find_section(addr):
+-    for s in SECTIONS:
+-        if s['va'] <= addr < s['va'] + s['size']:
++def section_start(section):
++    value = section.get('virtual_addr', section.get('va'))
++    return int(value, 16) if isinstance(value, str) else value
++
++
++def section_size(section):
++    return section.get('virtual_size', section.get('size'))
++
++
++def find_section(addr, sections):
++    for s in sections:
++        start = section_start(s)
++        if start <= addr < start + section_size(s):
+             return s['name']
+     return None
+ 
+ 
+-def main():
++def main(argv=None):
++    parser = argparse.ArgumentParser(description='Classify unresolved addresses using parsed XBE sections.')
++    parser.add_argument('--xbe-analysis', required=True,
++                        help='JSON metadata produced by tools.xbe_parser for the XBE used in this build')
++    parser.add_argument('--unresolved', default=UNRESOLVED_PATH,
++                        help='text file containing unresolved sub_XXXXXXXX addresses')
++    parser.add_argument('--functions', default=FUNCTIONS_PATH,
++                        help='function database JSON')
++    parser.add_argument('--output-dir', default=os.path.dirname(OUTPUT_PATH),
++                        help='directory for missing_functions.json and addable_functions.json')
++    args = parser.parse_args(argv)
++    with open(args.xbe_analysis, encoding='utf-8') as f:
++        sections = json.load(f)['sections']
++    text_sections = [s for s in sections if s['name'] == '.text']
++    if len(text_sections) != 1:
++        parser.error('XBE metadata must contain exactly one .text section')
++    text_start = section_start(text_sections[0])
++    text_end = text_start + section_size(text_sections[0])
++
+     print('Loading function database...')
+-    with open(FUNCTIONS_PATH) as f:
++    with open(args.functions, encoding='utf-8') as f:
+         raw_funcs = json.load(f)
+ 
+     functions = []
+@@ -53,7 +61,7 @@ def main():
+     print(f'  Range: 0x{functions[0][0]:08X} - 0x{functions[-1][1]:08X}')
+ 
+     print('Loading unresolved symbols...')
+-    with open(UNRESOLVED_PATH) as f:
++    with open(args.unresolved, encoding='utf-8') as f:
+         unresolved = []
+         for line in f:
+             line = line.strip()
+@@ -75,7 +83,7 @@ def main():
+     missing_functions = []
+ 
+     for addr in unresolved:
+-        section = find_section(addr)
++        section = find_section(addr, sections)
+ 
+         if section is None:
+             results['unknown'].append(addr)
+@@ -88,8 +96,8 @@ def main():
+             continue
+ 
+         if section != '.text':
+-            sec_info = next(s for s in SECTIONS if s['name'] == section)
+-            sec_end = sec_info['va'] + sec_info['size']
++            sec_info = next(s for s in sections if s['name'] == section)
++            sec_end = section_start(sec_info) + section_size(sec_info)
+             results['library_section'].append((addr, section))
+             missing_functions.append({'address': f'0x{addr:08X}', 'type': 'library_section', 'section': section, 'estimated_end': f'0x{sec_end:08X}'})
+             continue
+@@ -97,8 +105,8 @@ def main():
+         idx = bisect.bisect_right(func_starts, addr) - 1
+ 
+         if idx < 0:
+-            next_start = func_starts[0] if func_starts else TEXT_END
+-            results['gap'].append((addr, TEXT_START, next_start, next_start - addr))
++            next_start = func_starts[0] if func_starts else text_end
++            results['gap'].append((addr, text_start, next_start, next_start - addr))
+             missing_functions.append({'address': f'0x{addr:08X}', 'type': 'gap', 'next_func_start': f'0x{next_start:08X}', 'estimated_end': f'0x{next_start:08X}', 'gap_size': next_start - addr})
+             continue
+ 
+@@ -111,7 +119,7 @@ def main():
+ 
+         if addr == func_end:
+             next_idx = idx + 1
+-            next_start = functions[next_idx][0] if next_idx < len(functions) else TEXT_END
++            next_start = functions[next_idx][0] if next_idx < len(functions) else text_end
+             gap_to_next = next_start - addr
+             results['continuation'].append((addr, func_start, func_name, gap_to_next))
+             missing_functions.append({'address': f'0x{addr:08X}', 'type': 'continuation', 'parent_func': f'0x{func_start:08X}', 'parent_name': func_name, 'estimated_end': f'0x{next_start:08X}', 'gap_size': gap_to_next})
+@@ -122,7 +130,7 @@ def main():
+             continue
+ 
+         next_idx = idx + 1
+-        next_start = functions[next_idx][0] if next_idx < len(functions) else TEXT_END
++        next_start = functions[next_idx][0] if next_idx < len(functions) else text_end
+ 
+         if func_end <= addr < next_start:
+             gap_size = next_start - addr
+@@ -193,9 +201,9 @@ def main():
+             section_counts[sec] = section_counts.get(sec, 0) + 1
+         print('    By section:')
+         for sec, count in sorted(section_counts.items(), key=lambda x: -x[1]):
+-            sec_info = next(s for s in SECTIONS if s['name'] == sec)
+-            va = sec_info['va']
+-            sz = sec_info['size']
++            sec_info = next(s for s in sections if s['name'] == sec)
++            va = section_start(sec_info)
++            sz = section_size(sec_info)
+             print(f'      {sec:12s}: {count:4d} functions (section: 0x{va:08X}, {sz:,} bytes)')
+         print('    Examples:')
+         for a, sec in lib[:10]:
+@@ -208,7 +216,7 @@ def main():
+     if data:
+         print('    Examples:')
+         for a in data[:10]:
+-            sec = find_section(a)
++            sec = find_section(a, sections)
+             print(f'      0x{a:08X}  ({sec})')
+     print()
+ 
+@@ -249,16 +257,18 @@ def main():
+ 
+     if lib:
+         lib_sections_used = set(sec for _, sec in lib)
+-        total_lib_bytes = sum(next(s for s in SECTIONS if s['name'] == sec)['size'] for sec in lib_sections_used)
++        total_lib_bytes = sum(section_size(next(s for s in sections if s['name'] == sec)) for sec in lib_sections_used)
+         print(f'  Total library section bytes (all used sections): {total_lib_bytes:,} ({total_lib_bytes/1024:.1f} KB)')
+     print()
+ 
+-    print(f'\nWriting {len(missing_functions)} entries to {OUTPUT_PATH}...')
+-    with open(OUTPUT_PATH, 'w') as f:
++    os.makedirs(args.output_dir, exist_ok=True)
++    output_path = os.path.join(args.output_dir, 'missing_functions.json')
++    print(f'\nWriting {len(missing_functions)} entries to {output_path}...')
++    with open(output_path, 'w', encoding='utf-8') as f:
+         json.dump(missing_functions, f, indent=2)
+     print('Done.')
+ 
+-    quick_add_path = os.path.join(SCRIPT_DIR, 'output', 'addable_functions.json')
++    quick_add_path = os.path.join(args.output_dir, 'addable_functions.json')
+     addable = []
+     for entry in missing_functions:
+         if entry['type'] in ('gap', 'continuation', 'library_section'):
+@@ -270,7 +280,7 @@ def main():
+                 'section': entry.get('section', '.text'),
+             })
+     print(f'Writing {len(addable)} addable function candidates to {quick_add_path}...')
+-    with open(quick_add_path, 'w') as f:
++    with open(quick_add_path, 'w', encoding='utf-8') as f:
+         json.dump(addable, f, indent=2)
+     print('Done.')
+ 
 diff --git a/tools/recomp/config.py b/tools/recomp/config.py
 index 159f56c..39d74a2 100644
 --- a/tools/recomp/config.py
@@ -39154,6 +40173,47 @@ index 159f56c..39d74a2 100644
  def is_data_address(va):
      """Check if VA is in a data section."""
      for s in _SECTIONS:
+diff --git a/tools/recomp/icall_feedback.py b/tools/recomp/icall_feedback.py
+index 014b04d..88fa9f5 100644
+--- a/tools/recomp/icall_feedback.py
++++ b/tools/recomp/icall_feedback.py
+@@ -269,7 +269,7 @@ def cmd_seeds(args):
+     # with nothing logged anywhere. That is how the Xbox Dashboard lost
+     # __heap_init. Decoding cleanly does not save it -- an interior address is
+     # by definition mid-function, so it decodes fine.
+-    probe = _decode_probe(args.xbe)
++    probe = _decode_probe(args.xbe, args.analysis_json)
+     bodies = load_function_bodies(args.functions)
+     kept, dropped = {}, []
+     for va, flags in sorted(db.items()):
+@@ -297,7 +297,7 @@ def cmd_seeds(args):
+     return 0
+ 
+ 
+-def _decode_probe(xbe_path):
++def _decode_probe(xbe_path, analysis_json=None):
+     """Return a callable(va) -> bool backed by the disassembler's own probe.
+ 
+     None when no XBE was given, which leaves cmd_seeds on the alignment filter.
+@@ -306,7 +306,7 @@ def _decode_probe(xbe_path):
+         return None
+     from tools.disasm.loader import load_image, DATA_SECTION_NAMES
+     from tools.disasm.engine import DisasmEngine
+-    image = load_image(xbe_path)
++    image = load_image(xbe_path, analysis_json=analysis_json)
+     engine = DisasmEngine(image)
+     for section in image.sections:
+         if section.executable and section.name not in DATA_SECTION_NAMES:
+@@ -362,6 +362,9 @@ def main(argv=None):
+     s.add_argument("--xbe", default=None, metavar="XBE",
+                    help="decode each target and keep only those that read as a "
+                         "function body. Supersedes --align; strongly preferred.")
++    s.add_argument("--analysis-json", default=None, metavar="JSON",
++                   help="XBE analysis file to use with --xbe when it is not "
++                        "beside the executable under the expected name")
+     s.add_argument("--align", type=int, default=16, metavar="N",
+                    help="drop targets not N-byte aligned; 0 disables. Default "
+                         "%(default)s, which is what MSVC emits for a function "
 diff --git a/tools/recomp/lifter.py b/tools/recomp/lifter.py
 index f0ba077..2a5be14 100644
 --- a/tools/recomp/lifter.py
@@ -39319,8 +40379,85 @@ index f0ba077..2a5be14 100644
          # Handle jecxz/jcxz specially (not flag-based)
          if curr.mnemonic in ("jecxz", "jcxz"):
              results = lifter._lift_jcc(curr)
+diff --git a/tools/recomp/test_analyze_unresolved.py b/tools/recomp/test_analyze_unresolved.py
+new file mode 100644
+index 0000000..6f7a042
+--- /dev/null
++++ b/tools/recomp/test_analyze_unresolved.py
+@@ -0,0 +1,48 @@
++import json
++import tempfile
++import unittest
++from pathlib import Path
++
++from tools.recomp.analyze_unresolved import find_section, main
++
++
++class FindSectionTests(unittest.TestCase):
++    def test_uses_virtual_ranges_from_xbe_metadata(self):
++        sections = [
++            {"name": ".text", "virtual_addr": "0x2000", "virtual_size": 0x100},
++            {"name": "WMADEC", "virtual_addr": "0x3000", "virtual_size": 0x80},
++            {"name": ".data", "virtual_addr": "0x4000", "virtual_size": 0x100},
++        ]
++
++        self.assertEqual(find_section(0x2000, sections), ".text")
++        self.assertEqual(find_section(0x20FF, sections), ".text")
++        self.assertIsNone(find_section(0x2100, sections))
++        self.assertEqual(find_section(0x307F, sections), "WMADEC")
++        self.assertIsNone(find_section(0x11000, sections))
++
++    def test_cli_classifies_using_the_supplied_xbe_layout(self):
++        with tempfile.TemporaryDirectory() as temp:
++            root = Path(temp)
++            analysis = root / "xbe-analysis.json"
++            functions = root / "functions.json"
++            unresolved = root / "unresolved.txt"
++            output = root / "out"
++            analysis.write_text(json.dumps({"sections": [
++                {"name": ".text", "virtual_addr": "0x2000", "virtual_size": 0x100},
++                {"name": ".rdata", "virtual_addr": "0x3000", "virtual_size": 0x80},
++            ]}), encoding="utf-8")
++            functions.write_text(json.dumps([
++                {"start": "0x00002000", "end": "0x00002020", "name": "known"},
++            ]), encoding="utf-8")
++            unresolved.write_text("sub_00002010\nsub_00003008\nsub_00005000\n", encoding="utf-8")
++
++            main(["--xbe-analysis", str(analysis), "--functions", str(functions),
++                  "--unresolved", str(unresolved), "--output-dir", str(output)])
++
++            results = json.loads((output / "missing_functions.json").read_text(encoding="utf-8"))
++            self.assertEqual([item["type"] for item in results],
++                             ["mid_function", "data_section", "unknown"])
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tools/recomp/test_unresolved_stub_trace.py b/tools/recomp/test_unresolved_stub_trace.py
+new file mode 100644
+index 0000000..8f5ff3c
+--- /dev/null
++++ b/tools/recomp/test_unresolved_stub_trace.py
+@@ -0,0 +1,17 @@
++"""Regression checks for unresolved-call stub diagnostics."""
++
++from tools.recomp.translator import _render_unresolved_stub
++
++
++def test_unresolved_stub_records_target_before_restoring_guest_stack():
++    generated = _render_unresolved_stub(
++        0x00124F2C, "sub_00124F2C", popped=0)
++
++    assert "RECOMP_UNRESOLVED_STUB_HIT(0x00124F2Cu);" in generated
++    assert generated.index("RECOMP_UNRESOLVED_STUB_HIT") < generated.index(
++        "g_esp += 4")
++
++
++if __name__ == "__main__":
++    test_unresolved_stub_records_target_before_restoring_guest_stack()
++    print("1 checks passed")
 diff --git a/tools/recomp/translator.py b/tools/recomp/translator.py
-index 4c840a1..848edb7 100644
+index 4c840a1..0cf3c14 100644
 --- a/tools/recomp/translator.py
 +++ b/tools/recomp/translator.py
 @@ -15,6 +15,7 @@ import bisect
@@ -39331,7 +40468,7 @@ index 4c840a1..848edb7 100644
  import struct
  
  # Import the functions, not the VA constants: configure_from_xbe() rebinds those
-@@ -22,6 +23,7 @@ import struct
+@@ -22,11 +23,21 @@ import struct
  from .config import va_to_file_offset, is_code_address
  from . import config as _config
  from .disasm import Disassembler
@@ -39339,7 +40476,21 @@ index 4c840a1..848edb7 100644
  from .lifter import (Lifter, lift_basic_block, detect_seh_helpers,
                       _RESULT_SNAPSHOT_SETTERS,
                       detect_setjmp_helpers, _func_ident, _operand_width)
-@@ -48,9 +50,24 @@ def _merge_flag_states(states):
+ 
+ 
++def _render_unresolved_stub(addr, name, popped):
++    """Emit a diagnostic hook before the stub consumes the guest return."""
++    stack_pop = 4 + popped
++    note = f"ret {popped}" if popped else "not detected"
++    return (f"void {name}(void) {{ "
++            f"RECOMP_UNRESOLVED_STUB_HIT(0x{addr:08X}u); "
++            f"g_esp += {stack_pop}; /* 0x{addr:08X}: {note} */ }}")
++
++
+ def _merge_flag_states(states):
+     """Merge comparable snapshots without requiring identical source operands.
+ 
+@@ -48,9 +59,24 @@ def _merge_flag_states(states):
              if (_operand_width(ops[0]) or _operand_width(ops[1])) != width:
                  return None
          return first
@@ -39364,7 +40515,7 @@ index 4c840a1..848edb7 100644
  def _merge_zero_flag(states):
      """Predecessors that disagree on the operation but not on the zero flag.
  
-@@ -310,19 +327,41 @@ class FunctionTranslator:
+@@ -310,19 +336,41 @@ class FunctionTranslator:
          self.recovered_function_starts = set()
          self._recovered_cfg = {}
          self._ownership_ready = False
@@ -39413,7 +40564,7 @@ index 4c840a1..848edb7 100644
              for lower, upper in self._find_static_indirect_ranges(instructions):
                  targets = self._read_static_callback_table(
                      lower, upper, original_starts)
-@@ -371,6 +410,208 @@ class FunctionTranslator:
+@@ -371,6 +419,208 @@ class FunctionTranslator:
  
          return self.recovered_function_starts
  
@@ -39622,7 +40773,7 @@ index 4c840a1..848edb7 100644
      @staticmethod
      def _find_static_indirect_ranges(instructions, max_bytes=0x10000):
          """Find immediate-backed ranges in functions that call a register."""
-@@ -551,6 +792,36 @@ class FunctionTranslator:
+@@ -551,6 +801,36 @@ class FunctionTranslator:
                      cfg_targets.update(targets)
                  return instructions, jump_tables, cfg_targets
  
@@ -39659,7 +40810,7 @@ index 4c840a1..848edb7 100644
      def _stub_ret_bytes(self, addr, max_insns=48):
          """Bytes the code at `addr` would have popped beyond the return address.
  
-@@ -610,6 +881,39 @@ class FunctionTranslator:
+@@ -610,6 +890,39 @@ class FunctionTranslator:
          backward.reverse()
          return backward + forward
  
@@ -39699,7 +40850,7 @@ index 4c840a1..848edb7 100644
      def _read_func_bytes(self, start_va, end_va):
          """Read raw bytes for a function from the XBE."""
          offset = va_to_file_offset(start_va)
-@@ -711,8 +1015,8 @@ class FunctionTranslator:
+@@ -711,8 +1024,8 @@ class FunctionTranslator:
          # Set function bounds for the lifter
          self.lifter.func_start = start
          self.lifter.func_end = end
@@ -39710,7 +40861,7 @@ index 4c840a1..848edb7 100644
  
          # Disassemble
          instructions = (recovered["instructions"] if recovered else
-@@ -720,6 +1024,15 @@ class FunctionTranslator:
+@@ -720,6 +1033,15 @@ class FunctionTranslator:
          if not instructions:
              return [], []
  
@@ -39726,7 +40877,7 @@ index 4c840a1..848edb7 100644
          # Addresses this function loads as immediates into a register and
          # then jumps to. `mov ebx, 0x3A0DC; ... ; jmp ebx` is a continuation
          # chain inside one function, and its targets need labels for the
-@@ -1331,6 +1644,11 @@ class BatchTranslator:
+@@ -1331,6 +1653,11 @@ class BatchTranslator:
              setjmp_fn=setjmp_fn, longjmp_fn=longjmp_fn,
              trace_functions=trace_functions)
          self.translator.discover_static_indirect_targets()
@@ -39738,7 +40889,7 @@ index 4c840a1..848edb7 100644
          self.translator.discover_cfg_ownership()
  
      def get_functions_by_category(self, categories=None, exclude_categories=None):
-@@ -1480,7 +1798,8 @@ class BatchTranslator:
+@@ -1480,7 +1807,8 @@ class BatchTranslator:
  
      def translate_batch_split(self, func_list, output_dir, chunk_size=1000,
                                header_name="recomp_funcs.h",
@@ -39748,7 +40899,7 @@ index 4c840a1..848edb7 100644
          """
          Translate functions into multiple .c files + a shared header.
  
-@@ -1497,6 +1816,12 @@ class BatchTranslator:
+@@ -1497,6 +1825,12 @@ class BatchTranslator:
          is how a game replaces a recompiled XDK routine (a D3D8 entry point,
          say) with one that drives the host runtime instead of the hardware.
  
@@ -39761,7 +40912,7 @@ index 4c840a1..848edb7 100644
          Returns dict with stats and list of generated files.
          """
          import sys
-@@ -1511,6 +1836,8 @@ class BatchTranslator:
+@@ -1511,6 +1845,8 @@ class BatchTranslator:
          # the override only took effect through a function pointer, and
          # every direct caller silently reached the generated body.
          self.translator.lifter.manual_functions = manual
@@ -39770,7 +40921,7 @@ index 4c840a1..848edb7 100644
          manual_decls = {}
  
          # Translate all functions first, collecting results
-@@ -1545,6 +1872,19 @@ class BatchTranslator:
+@@ -1545,6 +1881,19 @@ class BatchTranslator:
                  translations.append((addr, name, stub))
                  stats["failed"] += 1
  
@@ -39790,7 +40941,7 @@ index 4c840a1..848edb7 100644
          # Any address called but never defined needs a stub, or the link fails.
          # These are almost all mid-function entry points the function detector
          # did not split out: a call lands a few bytes inside (or just past) a
-@@ -1554,6 +1894,7 @@ class BatchTranslator:
+@@ -1554,6 +1903,7 @@ class BatchTranslator:
          # translated chunks.
          defined = {name for _, name, _ in translations}
          defined |= set(manual_decls.values())   # hand-written, but defined
@@ -39798,7 +40949,7 @@ index 4c840a1..848edb7 100644
          unresolved = {
              addr: name
              for addr, name in self.translator.lifter.referenced_calls.items()
-@@ -1596,6 +1937,13 @@ class BatchTranslator:
+@@ -1596,6 +1946,13 @@ class BatchTranslator:
                  header_lines.append(
                      f"void {manual_decls[addr]}(void);  /* 0x{addr:08X} */")
  
@@ -39812,7 +40963,21 @@ index 4c840a1..848edb7 100644
          if unresolved:
              header_lines.append("")
              header_lines.append("/* Unresolved call targets (stubbed) */")
-@@ -1760,9 +2108,11 @@ class BatchTranslator:
+@@ -1735,11 +2092,8 @@ class BatchTranslator:
+             stub_lines.append("")
+             for addr in sorted(unresolved):
+                 popped = self.translator._stub_ret_bytes(addr)
+-                note = (f"ret {popped}" if popped else "not detected")
+-                stub_lines.append(
+-                    f"void {unresolved[addr]}(void) {{ g_esp += {4 + popped}; "
+-                    f"/* 0x{addr:08X}: {note} */ }}"
+-                )
++                stub_lines.append(_render_unresolved_stub(
++                    addr, unresolved[addr], popped))
+             stub_lines.append("")
+ 
+             write_if_changed(stub_path, "\n".join(stub_lines))
+@@ -1760,9 +2114,11 @@ class BatchTranslator:
          # _initterm and atexit. The header already declares them.
          # Sorted by address: recomp_lookup binary-searches this array, so an
          # appended entry would silently break every lookup past it.
@@ -39826,7 +40991,7 @@ index 4c840a1..848edb7 100644
              key=lambda e: e[0])
          dispatch_path = os.path.join(output_dir, f"{prefix}_dispatch.c")
          self._write_dispatch_table(dispatch_entries, dispatch_path, header_name)
-@@ -1773,6 +2123,51 @@ class BatchTranslator:
+@@ -1773,6 +2129,51 @@ class BatchTranslator:
          stats["chunk_size"] = chunk_size
          return stats
  
@@ -39878,272 +41043,3 @@ index 4c840a1..848edb7 100644
      def _write_dispatch_table(self, translations, output_path, header_name):
          """
          Generate a dispatch table mapping Xbox VA -> function pointer.
-diff --git a/src/video/pc_movie_skip.c b/src/video/pc_movie_skip.c
-new file mode 100644
-index 0000000..e4a5da3
---- /dev/null
-+++ b/src/video/pc_movie_skip.c
-@@ -0,0 +1,236 @@
-+/* BLACK's native XMV input. Decoder ownership and EOF stay with the guest. */
-+#include "pc_movie_skip.h"
-+#include "pc_menu.h"
-+#include "../input/pc_input.h"
-+#include <stdio.h>
-+#include <string.h>
-+#ifndef WIN32_LEAN_AND_MEAN
-+#define WIN32_LEAN_AND_MEAN
-+#endif
-+#include <windows.h>
-+
-+#define MOVIE_LEASE_MS 500u
-+#define CONFIRM_MS 3000u
-+#define KEY_ESC 0x001u
-+#define KEY_ENTER 0x01Cu
-+#define KEY_SPACE 0x039u
-+#define KEY_NUMENTER 0x11Cu
-+#define KEY_F11 0x057u
-+
-+static SRWLOCK m_lock = SRWLOCK_INIT;
-+static uint64_t m_session, m_seen, m_confirm;
-+static int m_kind, m_request, m_release;
-+static int m_focused = 1;
-+/* Physical state survives movie transitions, so a held button cannot affect the
-+ * next movie. Consumed releases also stay consumed after the movie ends. */
-+static unsigned m_keys, m_pad, m_mouse;
-+static unsigned char m_swallowed[0x200];
-+static unsigned m_mouse_swallowed;
-+static int m_pad_swallowed;
-+#ifdef PC_MOVIE_SKIP_TEST
-+static uint64_t m_test_now;
-+void pc_movie_skip_test_time(uint64_t now) { m_test_now = now; }
-+static uint64_t now_ms(void) { return m_test_now; }
-+#else
-+static uint64_t now_ms(void) { return GetTickCount64(); }
-+#endif
-+
-+static void retire_locked(void)
-+{
-+    m_session = m_seen = m_confirm = 0;
-+    m_kind = PC_MOVIE_SKIP_NONE;
-+    m_request = 0;
-+    m_release = (m_keys | m_pad | m_mouse) != 0;
-+    pc_menu_set_movie_skip_prompt(0);
-+}
-+
-+static int active_locked(uint64_t now)
-+{
-+    if (m_kind && (now < m_seen || now - m_seen > MOVIE_LEASE_MS)) retire_locked();
-+    if (m_confirm && now >= m_confirm) {
-+        m_confirm = 0;
-+        pc_menu_set_movie_skip_prompt(0);
-+    }
-+    return m_kind != PC_MOVIE_SKIP_NONE;
-+}
-+
-+static void press_locked(uint64_t now)
-+{
-+    if (!m_focused || !active_locked(now) || m_release || m_request) return;
-+    m_release = 1;
-+    if (m_kind == PC_MOVIE_SKIP_INTRO || m_confirm) {
-+        m_request = 1;
-+        m_confirm = 0;
-+        pc_menu_set_movie_skip_prompt(0);
-+        fprintf(stderr, "[MOVIE] skip requested (%s)\n",
-+                m_kind == PC_MOVIE_SKIP_INTRO ? "intro" : "confirmed");
-+    } else {
-+        m_confirm = now + CONFIRM_MS;
-+        pc_menu_set_movie_skip_prompt(1);
-+        fprintf(stderr, "[MOVIE] confirmation: Press again to skip\n");
-+    }
-+}
-+
-+static void release_locked(void)
-+{
-+    if (!(m_keys | m_pad | m_mouse)) m_release = 0;
-+}
-+
-+void pc_movie_skip_update(uint64_t session, int kind, int playing)
-+{
-+    const uint64_t now = now_ms();
-+    AcquireSRWLockExclusive(&m_lock);
-+    active_locked(now);
-+    if (!playing || !session || kind < PC_MOVIE_SKIP_INTRO || kind > PC_MOVIE_SKIP_CUTSCENE) {
-+        retire_locked();
-+    } else {
-+        if (m_session != session || m_kind != kind) {
-+            retire_locked();
-+            m_session = session;
-+            m_kind = kind;
-+        }
-+        m_seen = now;
-+    }
-+    ReleaseSRWLockExclusive(&m_lock);
-+}
-+
-+int pc_movie_skip_take_request(uint64_t session)
-+{
-+    int take;
-+    AcquireSRWLockExclusive(&m_lock);
-+    take = active_locked(now_ms()) && session == m_session && m_request;
-+    if (take) retire_locked();
-+    ReleaseSRWLockExclusive(&m_lock);
-+    return take;
-+}
-+
-+void pc_movie_skip_clear(void)
-+{
-+    AcquireSRWLockExclusive(&m_lock);
-+    retire_locked();
-+    ReleaseSRWLockExclusive(&m_lock);
-+}
-+
-+int pc_movie_skip_active(void)
-+{
-+    int active;
-+    AcquireSRWLockExclusive(&m_lock);
-+    active = active_locked(now_ms());
-+    ReleaseSRWLockExclusive(&m_lock);
-+    return active;
-+}
-+
-+static unsigned key_bit(unsigned id)
-+{
-+    switch (id) {
-+    case KEY_ESC: return 1u;
-+    case KEY_ENTER: return 2u;
-+    case KEY_SPACE: return 4u;
-+    case KEY_NUMENTER: return 8u;
-+    default: return 0u;
-+    }
-+}
-+
-+static int f_key(unsigned id, int down, int repeat)
-+{
-+    const uint64_t now = now_ms();
-+    const unsigned bit = key_bit(id);
-+    int active, take;
-+    if (id >= sizeof(m_swallowed) || id == KEY_F11) return 0;
-+    AcquireSRWLockExclusive(&m_lock);
-+    active = active_locked(now);
-+    take = active || m_swallowed[id];
-+    if (down) {
-+        const int edge = bit && !(m_keys & bit) && !repeat;
-+        m_keys |= bit;
-+        if (active) m_swallowed[id] = 1;
-+        if (edge) press_locked(now);
-+    } else {
-+        m_keys &= ~bit;
-+        m_swallowed[id] = 0;
-+        release_locked();
-+    }
-+    ReleaseSRWLockExclusive(&m_lock);
-+    return take;
-+}
-+
-+static int f_button(int button, int down)
-+{
-+    const uint64_t now = now_ms();
-+    unsigned bit;
-+    int active, take;
-+    if (button < 0 || button > 4) return 0;
-+    bit = 1u << button;
-+    AcquireSRWLockExclusive(&m_lock);
-+    active = active_locked(now);
-+    take = active || (m_mouse_swallowed & bit) != 0;
-+    if (down) {
-+        const int edge = button == 0 && !m_mouse;
-+        if (button == 0) m_mouse = 1;
-+        if (active) m_mouse_swallowed |= bit;
-+        if (edge) press_locked(now);
-+    } else {
-+        if (button == 0) m_mouse = 0;
-+        m_mouse_swallowed &= ~bit;
-+        release_locked();
-+    }
-+    ReleaseSRWLockExclusive(&m_lock);
-+    return take;
-+}
-+
-+static int f_wheel(int delta) { (void)delta; return pc_movie_skip_active(); }
-+
-+static int f_report(uint8_t out[20], int pad_present)
-+{
-+    const uint64_t now = now_ms();
-+    /* Xbox report: digital START, analog A/B. A real or scripted pad
-+     * enters the same filter before the guest can act on its own skip input. */
-+    const unsigned down = pad_present ?
-+        ((out[2] & 0x10u) ? 1u : 0u) |
-+        ((out[4] > 30u) ? 2u : 0u) | ((out[5] > 30u) ? 4u : 0u) : 0u;
-+    int active, take;
-+    AcquireSRWLockExclusive(&m_lock);
-+    active = active_locked(now);
-+    take = active || (m_pad_swallowed && down);
-+    {
-+        const unsigned edge = down & ~m_pad;
-+        m_pad = down;
-+        if (active && down) m_pad_swallowed = 1;
-+        if (edge) press_locked(now);
-+        if (!down) m_pad_swallowed = 0;
-+        release_locked();
-+    }
-+    ReleaseSRWLockExclusive(&m_lock);
-+    return take;
-+}
-+
-+static void f_focus(int focused)
-+{
-+    AcquireSRWLockExclusive(&m_lock);
-+    m_focused = focused != 0;
-+    m_release = 1; /* A held pad on focus return needs a fresh release. */
-+    if (!focused) {
-+        m_confirm = m_request = 0;
-+        pc_menu_set_movie_skip_prompt(0);
-+        /* Key-up may go to another window; require a fresh release on return. */
-+        m_keys = m_mouse = 0;
-+        m_release = 1;
-+    }
-+    ReleaseSRWLockExclusive(&m_lock);
-+}
-+
-+static const PcInputFilter k_filter = { f_key, f_button, f_wheel, f_report, f_focus };
-+void pc_movie_skip_install(void) { pc_input_set_filter_slot(2, &k_filter); }
-+
-+#ifdef PC_MOVIE_SKIP_TEST
-+void pc_movie_skip_test_reset(void)
-+{
-+    AcquireSRWLockExclusive(&m_lock);
-+    m_keys = m_pad = m_mouse = m_mouse_swallowed = 0;
-+    m_pad_swallowed = 0;
-+    m_focused = 1;
-+    memset(m_swallowed, 0, sizeof(m_swallowed));
-+    retire_locked();
-+    ReleaseSRWLockExclusive(&m_lock);
-+}
-+#endif
-diff --git a/src/video/pc_movie_skip.h b/src/video/pc_movie_skip.h
-new file mode 100644
-index 0000000..725072f
---- /dev/null
-+++ b/src/video/pc_movie_skip.h
-@@ -0,0 +1,21 @@
-+#ifndef XBOXRECOMP_PC_MOVIE_SKIP_H
-+#define XBOXRECOMP_PC_MOVIE_SKIP_H
-+#include <stdint.h>
-+
-+enum { PC_MOVIE_SKIP_NONE, PC_MOVIE_SKIP_INTRO, PC_MOVIE_SKIP_CUTSCENE };
-+
-+/* Game thread: refresh a playing movie's identity each pump. Zero playing or NONE
-+ * retires it. A new identity always starts with an unarmed confirmation. */
-+void pc_movie_skip_update(uint64_t session, int kind, int playing);
-+int pc_movie_skip_take_request(uint64_t session);
-+void pc_movie_skip_clear(void);
-+/* Input/presenter threads: a fresh native movie currently owns input. */
-+int pc_movie_skip_active(void);
-+/* Install ahead of menu input filters. Called once by the presenter. */
-+void pc_movie_skip_install(void);
-+
-+#ifdef PC_MOVIE_SKIP_TEST
-+void pc_movie_skip_test_time(uint64_t now);
-+void pc_movie_skip_test_reset(void);
-+#endif
-+#endif

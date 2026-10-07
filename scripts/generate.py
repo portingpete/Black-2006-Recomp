@@ -7,6 +7,7 @@ runtime optimizations and title hooks used by the verified PC build.
 import argparse
 import datetime
 import hashlib
+import json
 import re
 import shutil
 import subprocess
@@ -391,9 +392,109 @@ def emit_idct(source, destination):
         destination.write_text(text, encoding="utf-8")
 
 
+def audit_generated_sources(directory):
+    """Summarize the exact transformed C and headers that the project compiles."""
+    paths = sorted((*directory.glob("*.c"), *directory.glob("*.h")))
+    if not paths:
+        raise RuntimeError(f"No generated C or header files to audit in {directory}")
+
+    digest = hashlib.sha256()
+    files = []
+    functions = todo_comments = failures = unresolved_sites = 0
+    for path in paths:
+        content = path.read_bytes()
+        text = content.decode("utf-8")
+        digest.update(path.name.encode("utf-8") + b"\0" + content + b"\0")
+        files.append({
+            "path": path.name,
+            "bytes": len(content),
+            "sha256": hashlib.sha256(content).hexdigest().upper(),
+        })
+        functions += len(re.findall(r"(?m)^void\s+\w+\s*\(void\)\s*\{", text))
+        todo_comments += len(re.findall(r"(?m)^\s*/\* TODO:", text))
+        failures += text.count("/* FAILED:")
+        unresolved_sites += len(re.findall(
+            r"(?m)^(?!\s*#define)\s*.*\bRECOMP_UNRESOLVED_STUB_HIT\(", text))
+
+    return {
+        "schema_version": 1,
+        "source_sha256": digest.hexdigest().upper(),
+        "source_file_count": len(files),
+        "generated_function_definitions": functions,
+        "remaining_todo_comments": todo_comments,
+        "failed_translation_markers": failures,
+        "unresolved_stub_trace_sites": unresolved_sites,
+        "files": files,
+    }
+
+
+def write_post_transform_audit(generated, output, raw_summary_path):
+    """Persist final-source metrics and link them to the raw recompiler summary."""
+    audit = audit_generated_sources(output)
+    if audit["source_sha256"] != audit_generated_sources(generated)["source_sha256"]:
+        raise RuntimeError("Copied generated sources differ from transformed generator output")
+    raw_summary_bytes = raw_summary_path.read_bytes()
+    raw_summary = json.loads(raw_summary_bytes)
+    raw_archive_path = raw_summary_path.with_name(
+        raw_summary_path.stem + ".raw" + raw_summary_path.suffix)
+    # Keep the exact bytes whose digest the audit records. The original path
+    # below becomes the augmented summary, so it cannot serve as this archive.
+    with raw_archive_path.open("xb") as archive:
+        archive.write(raw_summary_bytes)
+    audit["raw_recompiler_summary"] = {
+        "path": str(raw_archive_path),
+        "sha256": hashlib.sha256(raw_summary_bytes).hexdigest().upper(),
+        "unimplemented_instruction_sites": sum(
+            len(addresses) for addresses in raw_summary.get("unimplemented", {}).values()),
+    }
+    audit_path = output / "post_transform_audit.json"
+    audit_path.write_text(json.dumps(audit, indent=2) + "\n", encoding="utf-8")
+    raw_summary["summary_stage"] = "raw_recompiler_before_black_transforms"
+    raw_summary["post_transform_audit"] = {
+        "path": str(audit_path),
+        "source_sha256": audit["source_sha256"],
+        "source_file_count": audit["source_file_count"],
+        "generated_function_definitions": audit["generated_function_definitions"],
+        "remaining_todo_comments": audit["remaining_todo_comments"],
+        "failed_translation_markers": audit["failed_translation_markers"],
+        "unresolved_stub_trace_sites": audit["unresolved_stub_trace_sites"],
+    }
+    raw_summary_path.write_text(json.dumps(raw_summary, indent=2) + "\n", encoding="utf-8")
+    return audit
+
+
 def command(toolkit, module, arguments):
     print(f"Running {module}", flush=True)
     subprocess.run([sys.executable, "-m", module, *map(str, arguments)], cwd=toolkit, check=True)
+
+
+def merge_icall_feedback(toolkit, feedback_db, feedback_dumps):
+    """Merge observations, treating an empty runtime dump as a harmless no-op."""
+    if not feedback_dumps:
+        return False
+    # Use the runtime's parser so truncation and zero flags have exactly the
+    # same meaning here as in its merge command. Keep toolkit imports isolated
+    # from this title's Python modules, and propagate genuine parser failures.
+    probe = subprocess.run(
+        [sys.executable, "-c",
+         "import json, sys; "
+         "from tools.recomp.icall_feedback import parse_dump; "
+         "print(json.dumps(any(parse_dump(path) for path in sys.argv[1:])))",
+         *map(str, feedback_dumps)],
+        cwd=toolkit, check=True, stdout=subprocess.PIPE, text=True)
+    if not json.loads(probe.stdout):
+        print("No runtime indirect-call observations to merge", flush=True)
+        return False
+    command(toolkit, "tools.recomp.icall_feedback",
+            ["--db", feedback_db, "merge", *feedback_dumps])
+    return True
+
+
+def run_disasm(toolkit, xbe, analysis, output, seed_file=None):
+    arguments = [xbe, "--analysis-json", analysis, "-o", output, "--force"]
+    if seed_file is not None:
+        arguments.extend(["--seed-functions", seed_file])
+    command(toolkit, "tools.disasm", arguments)
 
 
 IDCT_PREFIX = '/* Locally generated XMV SSE2 kernel. Do not distribute this generated file. */\n#include <emmintrin.h>\n\nextern void sub_002420C8_gen(void);\nextern __declspec(thread) uint32_t g_ebp;\nextern __declspec(thread) uint32_t g_seh_ebp;\n\nstatic int black_idct_mode = -1;                 /* 0 generated, 1 native, 2 verify */\nstatic unsigned black_idct_verified, black_idct_bad;\n\n/* MMX pack/unpack on the low 64 bits of an SSE register */\nstatic __forceinline __m128i idct_pack_ssdw(__m128i a, __m128i b) { __m128i x = _mm_unpacklo_epi64(a, b); return _mm_packs_epi32(x, x); }\nstatic __forceinline __m128i idct_pack_uswb(__m128i a, __m128i b) { __m128i x = _mm_unpacklo_epi64(a, b); return _mm_packus_epi16(x, x); }\nstatic __forceinline __m128i idct_unpackhi_dq(__m128i a, __m128i b) { return _mm_unpacklo_epi32(_mm_srli_epi64(a, 32), _mm_srli_epi64(b, 32)); }\n#define pack_ssdw idct_pack_ssdw\n#define pack_uswb idct_pack_uswb\n#define unpackhi_dq idct_unpackhi_dq\n\ntypedef struct IdctOut { uint32_t eax, ecx, edx; } IdctOut;\n\n/* sp = guest esp at entry (the return address). Returns the registers the generated code leaves behind. */\nstatic IdctOut idct_native(uint32_t sp)\n{\n    uint8_t *mem = (uint8_t *)(uintptr_t)g_xbox_mem_offset;\n    uint32_t r_ebp = sp - 4;                              /* push ebp; mov ebp, esp */\n    uint32_t arg_dst = GUEST32(sp + 4), arg_stride = GUEST32(sp + 8), arg_coef = GUEST32(sp + 12);\n    uint32_t scratch = (r_ebp - 268) & 0xFFFFFFE0u;\n    uint32_t r_eax = 0, r_ebx = 0, r_ecx, r_edx, r_esi, r_edi;\n    __m128i m0 = _mm_setzero_si128(), m1 = m0, m2 = m0, m3 = m0, m4 = m0, m5 = m0, m6 = m0, m7 = m0;\n    IdctOut out;\n\n    r_esi = arg_coef;\n    r_edi = scratch;\n    for (r_ecx = 0xFFFFFFFCu; (int32_t)r_ecx < 0; ) {\n'
@@ -408,6 +509,11 @@ def main():
     parser.add_argument("--toolkit", type=Path, default=root / "third_party/xboxrecomp")
     parser.add_argument("--xbe", type=Path, default=root / "game/default.xbe")
     parser.add_argument("--output", type=Path, default=root / "src/recomp/gen")
+    parser.add_argument("--icall-db", type=Path,
+                        default=root / "local/icall_targets.json",
+                        help="cumulative runtime ICALL feedback database")
+    parser.add_argument("--icall-dump", type=Path, action="append", default=None,
+                        help="runtime ICALL dump to merge before generation; may be repeated")
     args = parser.parse_args()
     toolkit, xbe, output = args.toolkit.resolve(), args.xbe.resolve(), args.output.resolve()
     if not xbe.is_file():
@@ -421,7 +527,22 @@ def main():
     manual = work / "manual-scan.c"
     manual.write_text(flatten_manual(root / "src/recomp_manual.c"), encoding="utf-8")
     command(toolkit, "tools.xbe_parser", [xbe, "--json", analysis])
-    command(toolkit, "tools.disasm", [xbe, "--analysis-json", analysis, "-o", disasm, "--force"])
+    run_disasm(toolkit, xbe, analysis, disasm)
+    feedback_db = args.icall_db.resolve()
+    feedback_dumps = [path.resolve() for path in (args.icall_dump or [])]
+    default_dump = root / "local/icall_targets.dump"
+    if default_dump.is_file() and default_dump not in feedback_dumps:
+        feedback_dumps.append(default_dump)
+    merge_icall_feedback(toolkit, feedback_db, feedback_dumps)
+    if feedback_db.is_file():
+        seeds = work / "icall-seeds.json"
+        command(toolkit, "tools.recomp.icall_feedback",
+                ["--db", feedback_db,
+                 "--functions", disasm / "functions.json",
+                 "seeds", "--out", seeds, "--xbe", xbe,
+                 "--analysis-json", analysis])
+        if json.loads(seeds.read_text(encoding="utf-8")):
+            run_disasm(toolkit, xbe, analysis, disasm, seeds)
     command(toolkit, "tools.func_id", [xbe, "--functions", disasm / "functions.json", "--strings", disasm / "strings.json", "--xrefs", disasm / "xrefs.json", "-o", identified])
     command(toolkit, "tools.abi_analysis", [xbe, "--disasm-dir", disasm, "--func-id-dir", identified, "--output-dir", abi])
     generated = work / "gen"
@@ -446,6 +567,8 @@ def main():
             destination = output / path.name
             if not destination.is_file() or destination.read_bytes() != path.read_bytes():
                 shutil.copyfile(path, destination)
+
+    write_post_transform_audit(generated, output, work / "summary" / "summary.json")
     print(f"Generated {len(chunks)} source chunks from your XBE. Local analysis: {work}", flush=True)
 
 

@@ -1163,6 +1163,61 @@ void recomp_icall_not_code_log(uint32_t va)
     fflush(stderr);
 }
 
+/* Called by generated unresolved stubs only in diagnostic builds. */
+void recomp_unresolved_stub_log(uint32_t target_va)
+{
+    enum { SLOTS = 32 };
+    static SRWLOCK lock = SRWLOCK_INIT;
+    static uint32_t targets[SLOTS];
+    static uint64_t hits[SLOTS];
+    static int count;
+    uint32_t caller = 0, args[4] = {0, 0, 0, 0};
+    uint64_t hit_count;
+    int i;
+
+    AcquireSRWLockExclusive(&lock);
+    for (i = 0; i < count; i++)
+        if (targets[i] == target_va)
+            break;
+    if (i == count) {
+        if (count == SLOTS) {
+            ReleaseSRWLockExclusive(&lock);
+            return;
+        }
+        targets[count] = target_va;
+        hits[count] = 0;
+        count++;
+    }
+    hit_count = ++hits[i];
+    ReleaseSRWLockExclusive(&lock);
+
+    if (g_xbox_mem_offset && g_esp >= 0x10000u && g_esp < 0x03FFF000u) {
+        const uint32_t *sp = (const uint32_t *)
+            ((uintptr_t)g_xbox_mem_offset + g_esp);
+        caller = sp[0];
+        for (int j = 0; j < 4; j++)
+            args[j] = sp[j + 1];
+    }
+
+    /* Log the first few calls and decimal powers thereafter to bound spam
+     * while retaining a useful hit-rate signal for loops. */
+    {
+        uint64_t n = hit_count;
+        while (n >= 10 && n % 10 == 0)
+            n /= 10;
+        if (n != 1)
+            return;
+    }
+    fprintf(stderr,
+            "[UNRESOLVED_STUB] target=0x%08X hits=%llu caller_ret=0x%08X "
+            "eax=%08X ecx=%08X edx=%08X ebx=%08X esi=%08X edi=%08X "
+            "esp=%08X args=%08X,%08X,%08X,%08X\n",
+            target_va, (unsigned long long)hit_count, caller,
+            g_eax, g_ecx, g_edx, g_ebx, g_esi, g_edi, g_esp,
+            args[0], args[1], args[2], args[3]);
+    fflush(stderr);
+}
+
 
 /* BEGIN BLACK_PC_NATIVE_MOVIE
  * Bounded original4:3 fullscreen movie presentation at selected camera aspect.

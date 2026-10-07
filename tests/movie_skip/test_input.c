@@ -17,11 +17,27 @@ static void reset(void)
 {
     _putenv_s("RECOMP_BLACK_INPUT_MODE", "auto");
     _putenv_s("RECOMP_INPUT_SCRIPT", "");
+    _putenv_s("RECOMP_PAD_SCRIPT", "");
     pc_input_test_reset(); pc_input_set_control_resolver(no_gameplay_control);
     pc_input_set_filter_slot(0,NULL); pc_input_set_filter_slot(1,NULL);
     pc_movie_skip_test_reset(); pc_movie_skip_install();
     pc_input_set_movie_active_query(pc_movie_skip_active);
     time_at(100000);
+}
+static void test_enter_maps_to_xbox_a(void)
+{
+    uint8_t out[20] = {0,20};
+    reset();
+    pc_input_key_event(0x1C,0,1,0); /* physical Enter scancode */
+    pc_input_apply_report(out,0);  /* no controller and no scripted presses */
+    CHECK(out[4] == 0xFF);
+
+    reset();
+    memset(out,0,sizeof(out)); out[1]=20;
+    pc_input_key_event(0x1C,1,1,0); /* extended keypad Enter */
+    pc_input_apply_report(out,0);
+    CHECK(out[4] == 0xFF);
+    reset();
 }
 static void key(unsigned code,int down,int repeat) { pc_input_key_event(code,0,down,repeat); }
 static void tap(unsigned code) { key(code,1,0); key(code,0,0); }
@@ -153,6 +169,7 @@ int main(void)
     tap(0x57); CHECK(lower_keys==2); pc_movie_skip_clear(); tap(0x13); CHECK(lower_keys==4);
     reset(); pc_movie_skip_update(1,PC_MOVIE_SKIP_CUTSCENE,1); tap(0x01); tap(0x01);
     CHECK(!pc_movie_skip_take_request(2)); CHECK(pc_movie_skip_take_request(1));
+    test_enter_maps_to_xbox_a();
     test_filtered_mouse_release();
     test_unfocused_pad();
     printf("PASS: %u movie skip checks\n",checks); return 0;

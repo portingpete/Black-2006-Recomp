@@ -1,0 +1,54 @@
+name: Runtime correction regressions
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-corrections:
+    name: Runtime corrections / Windows
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare pinned runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path third_party -Force | Out-Null
+          git clone https://github.com/sp00nznet/xboxrecomp.git third_party/xboxrecomp
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime clone failed' }
+          git -C third_party/xboxrecomp checkout --detach 766ecefcd7fb2a9b344de8ec891f6fe9ea14261b
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned checkout failed' }
+          git -C third_party/xboxrecomp apply --check "$PWD/patches/xboxrecomp.patch"
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime patch preflight failed' }
+          git -C third_party/xboxrecomp apply "$PWD/patches/xboxrecomp.patch"
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime patch failed' }
+      - name: Test generated-source audit and indirect-call feedback
+        run: python scripts/test_generate.py
+      - name: Build and run EEPROM regression
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake -S tests/eeprom -B build-eeprom -G "Visual Studio 17 2022" -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'EEPROM test configure failed' }
+          cmake --build build-eeprom --config Release
+          if ($LASTEXITCODE -ne 0) { throw 'EEPROM test build failed' }
+          ctest --test-dir build-eeprom -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'EEPROM regression failed' }
+      - name: Build and run kernel bridge regressions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake -S third_party/xboxrecomp/tests/kernel_bridge -B build-kernel-bridge -G "Visual Studio 17 2022" -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'Kernel bridge test configure failed' }
+          cmake --build build-kernel-bridge --config Release
+          if ($LASTEXITCODE -ne 0) { throw 'Kernel bridge test build failed' }
+          ctest --test-dir build-kernel-bridge -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'Kernel bridge regression failed' }
