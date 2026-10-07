@@ -410,7 +410,7 @@ def audit_generated_sources(directory):
             "bytes": len(content),
             "sha256": hashlib.sha256(content).hexdigest().upper(),
         })
-        functions += len(re.findall(r"(?m)^void\s+\w+\s*\(void\)\s*\n\{", text))
+        functions += len(re.findall(r"(?m)^void\s+\w+\s*\(void\)\s*\{", text))
         todo_comments += len(re.findall(r"(?m)^\s*/\* TODO:", text))
         failures += text.count("/* FAILED:")
         unresolved_sites += len(re.findall(
@@ -435,8 +435,14 @@ def write_post_transform_audit(generated, output, raw_summary_path):
         raise RuntimeError("Copied generated sources differ from transformed generator output")
     raw_summary_bytes = raw_summary_path.read_bytes()
     raw_summary = json.loads(raw_summary_bytes)
+    raw_archive_path = raw_summary_path.with_name(
+        raw_summary_path.stem + ".raw" + raw_summary_path.suffix)
+    # Keep the exact bytes whose digest the audit records. The original path
+    # below becomes the augmented summary, so it cannot serve as this archive.
+    with raw_archive_path.open("xb") as archive:
+        archive.write(raw_summary_bytes)
     audit["raw_recompiler_summary"] = {
-        "path": str(raw_summary_path),
+        "path": str(raw_archive_path),
         "sha256": hashlib.sha256(raw_summary_bytes).hexdigest().upper(),
         "unimplemented_instruction_sites": sum(
             len(addresses) for addresses in raw_summary.get("unimplemented", {}).values()),
@@ -460,6 +466,28 @@ def write_post_transform_audit(generated, output, raw_summary_path):
 def command(toolkit, module, arguments):
     print(f"Running {module}", flush=True)
     subprocess.run([sys.executable, "-m", module, *map(str, arguments)], cwd=toolkit, check=True)
+
+
+def merge_icall_feedback(toolkit, feedback_db, feedback_dumps):
+    """Merge observations, treating an empty runtime dump as a harmless no-op."""
+    if not feedback_dumps:
+        return False
+    # Use the runtime's parser so truncation and zero flags have exactly the
+    # same meaning here as in its merge command. Keep toolkit imports isolated
+    # from this title's Python modules, and propagate genuine parser failures.
+    probe = subprocess.run(
+        [sys.executable, "-c",
+         "import json, sys; "
+         "from tools.recomp.icall_feedback import parse_dump; "
+         "print(json.dumps(any(parse_dump(path) for path in sys.argv[1:])))",
+         *map(str, feedback_dumps)],
+        cwd=toolkit, check=True, stdout=subprocess.PIPE, text=True)
+    if not json.loads(probe.stdout):
+        print("No runtime indirect-call observations to merge", flush=True)
+        return False
+    command(toolkit, "tools.recomp.icall_feedback",
+            ["--db", feedback_db, "merge", *feedback_dumps])
+    return True
 
 
 def run_disasm(toolkit, xbe, analysis, output, seed_file=None):
@@ -505,9 +533,7 @@ def main():
     default_dump = root / "local/icall_targets.dump"
     if default_dump.is_file() and default_dump not in feedback_dumps:
         feedback_dumps.append(default_dump)
-    if feedback_dumps:
-        command(toolkit, "tools.recomp.icall_feedback",
-                ["--db", feedback_db, "merge", *feedback_dumps])
+    merge_icall_feedback(toolkit, feedback_db, feedback_dumps)
     if feedback_db.is_file():
         seeds = work / "icall-seeds.json"
         command(toolkit, "tools.recomp.icall_feedback",
