@@ -1,3 +1,15 @@
+diff --git a/.gitignore b/.gitignore
+index 1436912..ca45250 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -3,6 +3,7 @@ __pycache__/
+ *.pyc
+ *.pyo
+ .venv/
++.work/
+ 
+ # Tool output (regenerated per-game)
+ tools/disasm/output/
 diff --git a/NOTICE b/NOTICE
 index f2a4948..ff68d2d 100644
 --- a/NOTICE
@@ -62,6 +74,136 @@ index f2a4948..ff68d2d 100644
  Reference material (no code taken)
  -----------------------------------
  
+diff --git a/src/apu/CMakeLists.txt b/src/apu/CMakeLists.txt
+index 0bd4ebd..698cb3e 100644
+--- a/src/apu/CMakeLists.txt
++++ b/src/apu/CMakeLists.txt
+@@ -2,19 +2,73 @@
+ # Extracted from xemu (https://github.com/xemu-project/xemu)
+ #
+ # Voice Processor (VP): ADPCM/PCM decode, sample mixing, envelopes, filters
+-# Global Processor (GP): Stub - effects bypass
+-# Encode Processor (EP): Stub - direct mixbin passthrough
++# Global/Encode Processors (GP/EP): DSP56300 execution and MCPX DMA
+ 
+ add_library(xbox_apu STATIC
+     apu_core.c
+     apu_vp.c
+     apu_dsp.c
++    apu_dma.c
++    apu_dsp_engine.c
+     apu_mmio_hook.c
+     apu_xaudio2.c
+ )
+ 
+ target_include_directories(xbox_apu PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+ 
++# DSP56300 is a separately maintained MIT-licensed Rust core with a C ABI.
++# Keep its source pinned by scripts/setup.ps1; build the static library into
++# this CMake tree so the runtime and standalone APU tests use the same engine.
++get_filename_component(BLACK_PROJECT_ROOT
++    "${CMAKE_CURRENT_SOURCE_DIR}/../../../../" ABSOLUTE)
++set(DSP56300_SOURCE_DIR "${BLACK_PROJECT_ROOT}/.work/err009-dsp56300" CACHE PATH
++    "Pinned DSP56300 source checkout")
++if(NOT EXISTS "${DSP56300_SOURCE_DIR}/crates/emu-ffi/Cargo.toml")
++    message(FATAL_ERROR
++        "Pinned DSP56300 source is missing. Run scripts/setup.ps1 first.")
++endif()
++find_program(CARGO_EXECUTABLE NAMES cargo cargo.exe)
++if(NOT CARGO_EXECUTABLE)
++    message(FATAL_ERROR
++        "Rust/Cargo 1.98 or newer is required to build the DSP56300 core.")
++endif()
++
++if(WIN32 AND MSVC)
++    set(DSP56300_TARGET_TRIPLE x86_64-pc-windows-msvc)
++    set(DSP56300_LIBRARY
++        "${CMAKE_CURRENT_BINARY_DIR}/dsp56300/${DSP56300_TARGET_TRIPLE}/release/dsp56300_emu_ffi.lib")
++else()
++    set(DSP56300_TARGET_TRIPLE x86_64-unknown-linux-gnu)
++    set(DSP56300_LIBRARY
++        "${CMAKE_CURRENT_BINARY_DIR}/dsp56300/${DSP56300_TARGET_TRIPLE}/release/libdsp56300_emu_ffi.a")
++endif()
++file(GLOB_RECURSE DSP56300_RUST_SOURCES CONFIGURE_DEPENDS
++    "${DSP56300_SOURCE_DIR}/crates/core/*.rs"
++    "${DSP56300_SOURCE_DIR}/crates/emu/*.rs"
++    "${DSP56300_SOURCE_DIR}/crates/emu-ffi/*.rs"
++    "${DSP56300_SOURCE_DIR}/crates/emu-ffi/*.c"
++)
++add_custom_command(
++    OUTPUT "${DSP56300_LIBRARY}"
++    COMMAND "${CARGO_EXECUTABLE}" build --release --locked
++            --no-default-features -p dsp56300-emu-ffi
++            --target "${DSP56300_TARGET_TRIPLE}"
++            --target-dir "${CMAKE_CURRENT_BINARY_DIR}/dsp56300"
++    WORKING_DIRECTORY "${DSP56300_SOURCE_DIR}"
++    DEPENDS
++        "${DSP56300_SOURCE_DIR}/Cargo.toml"
++        "${DSP56300_SOURCE_DIR}/Cargo.lock"
++        ${DSP56300_RUST_SOURCES}
++    COMMENT "Building the pinned DSP56300 JIT library"
++    VERBATIM
++)
++add_custom_target(dsp56300_ffi_build DEPENDS "${DSP56300_LIBRARY}")
++add_dependencies(xbox_apu dsp56300_ffi_build)
++target_include_directories(xbox_apu PUBLIC
++    "${DSP56300_SOURCE_DIR}/crates/emu-ffi/include"
++)
++target_link_libraries(xbox_apu PRIVATE "${DSP56300_LIBRARY}")
++
+ # qemu_shim.h lives in nv2a/ - shared QEMU type abstraction
+ target_include_directories(xbox_apu PRIVATE
+     ${CMAKE_CURRENT_SOURCE_DIR}/../nv2a
+@@ -39,7 +93,9 @@ if(WIN32)
+     # target, so the archive was built and never pulled in, and the first
+     # target to actually call into the APU failed at link with an undefined
+     # XAudio2Create rather than at build time here.
+-    target_link_libraries(xbox_apu PRIVATE platform kernel32 winmm xaudio2_8 ole32)
++    target_link_libraries(xbox_apu PRIVATE
++        platform kernel32 winmm xaudio2_8 ole32 ntdll ws2_32 userenv
++    )
+ else()
+     # Linux: platform layer (Win32 primitives on POSIX) + SDL2 audio + libm
+     find_package(SDL2 REQUIRED)
+diff --git a/src/apu/README.md b/src/apu/README.md
+index 04c6b06..1d013fe 100644
+--- a/src/apu/README.md
++++ b/src/apu/README.md
+@@ -3,8 +3,8 @@
+ Hardware emulation of the Xbox's MCPX APU (Audio Processing Unit), extracted from [xemu](https://github.com/xemu-project/xemu). The APU is a custom chip with three processors:
+ 
+ - **VP (Voice Processor)** — 256 hardware voices, ADPCM/PCM decode, pitch shifting, envelopes, HRTF 3D audio
+-- **GP (Global Processor)** — DSP for global effects (reverb, chorus). Currently **stubbed** — effects bypass.
+-- **EP (Encode Processor)** — DSP for AC3/DTS encoding. Currently **stubbed** — passthrough.
++- **GP (Global Processor)** — loaded DSP56300 programs execute with separate X/Y/P memory, timer/frame peripherals, and scratch/FIFO DMA.
++- **EP (Encode Processor)** — loaded DSP56300 programs execute with DMA and PCM FIFO output capture. Direct mixdown remains a fallback; full in-game audio fidelity is not yet verified.
+ 
+ Audio output uses Windows `waveOut` at 48kHz stereo 16-bit.
+ 
+@@ -17,7 +17,9 @@ Audio output uses Windows `waveOut` at 48kHz stereo 16-bit.
+ | `apu_regs.h` | 366 | MCPX APU register definitions and field masks |
+ | `apu_core.c` | 762 | MMIO handlers, frame thread, waveOut output, test tone |
+ | `apu_vp.c` | 1,247 | Voice Processor — decode, resample, mix, envelopes, HRTF |
+-| `apu_dsp.c` | 90 | GP/EP stubs (mixbin 0/1 passthrough) |
++| `apu_dsp.c` | — | GP/EP boot, frame execution, MMIO, and temporary direct-mixdown fallback |
++| `apu_dsp_engine.c` | — | C adapter for the pinned DSP56300 JIT |
++| `apu_dma.c` | — | DSP descriptor chains, scratch transfers, and FIFO transfers |
+ | `apu_mmio_hook.c` | 253 | VEH x86-64 instruction decoder for 0xFE800000+ MMIO |
+ | `apu_shim.h` | 431 | QEMU compatibility (threads, atomics, clocks → Win32) |
+ | `apu_debug.h` | 104 | Debug logging macros |
+@@ -77,9 +79,9 @@ mcpx_apu_shutdown(apu);
+          ▼           ▼           ▼
+    ┌──────────┐ ┌─────────┐ ┌─────────┐
+    │    VP    │ │   GP    │ │   EP    │
+-   │256 voices│ │  (stub) │ │  (stub) │
+-   │ ADPCM/  │ │  effects│ │  encode │
+-   │  PCM    │ │  bypass │ │  bypass │
++   │256 voices│ │ DSP56300│ │ DSP56300│
++   │ ADPCM/  │ │   DMA   │ │   DMA   │
++   │  PCM    │ │         │ │PCM FIFO │
+    └────┬─────┘ └────┬────┘ └────┬────┘
+         │             │           │
+         └──────┬──────┘───────────┘
 diff --git a/src/apu/apu.h b/src/apu/apu.h
 index f7b9f8f..06754f2 100644
 --- a/src/apu/apu.h
@@ -106,10 +248,18 @@ index f7b9f8f..06754f2 100644
  uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size);
  
 diff --git a/src/apu/apu_core.c b/src/apu/apu_core.c
-index 459be77..d7b693e 100644
+index 459be77..7257a1f 100644
 --- a/src/apu/apu_core.c
 +++ b/src/apu/apu_core.c
-@@ -55,11 +55,54 @@ void mcpx_debug_begin_frame(void) {}
+@@ -21,6 +21,7 @@
+ 
+ #include "apu_state.h"
+ #include "apu.h"
++#include "apu_dsp_trace.h"
+ #include "apu_xaudio2.h"
+ #include "fpconv.h"
+ 
+@@ -55,11 +56,54 @@ void mcpx_debug_begin_frame(void) {}
  void mcpx_debug_end_frame(void) {}
  
  /* ============================================================
@@ -165,7 +315,7 @@ index 459be77..d7b693e 100644
      if (d->regs[NV_PAPU_FECTL] & NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
          qatomic_or(&d->regs[NV_PAPU_ISTS], NV_PAPU_ISTS_FETINTSTS);
      }
-@@ -67,12 +110,16 @@ static void update_irq(MCPXAPUState *d)
+@@ -67,12 +111,16 @@ static void update_irq(MCPXAPUState *d)
          ((d->regs[NV_PAPU_ISTS] & ~NV_PAPU_ISTS_GINTSTS) &
           d->regs[NV_PAPU_IEN])) {
          qatomic_or(&d->regs[NV_PAPU_ISTS], NV_PAPU_ISTS_GINTSTS);
@@ -184,7 +334,7 @@ index 459be77..d7b693e 100644
      }
  }
  
-@@ -85,6 +132,7 @@ uint64_t mcpx_apu_read(void *opaque, hwaddr addr, unsigned int size)
+@@ -85,6 +133,7 @@ uint64_t mcpx_apu_read(void *opaque, hwaddr addr, unsigned int size)
      MCPXAPUState *d = (MCPXAPUState *)opaque;
      uint64_t r = 0;
  
@@ -192,7 +342,7 @@ index 459be77..d7b693e 100644
      switch (addr) {
      case NV_PAPU_XGSCNT:
          r = (uint64_t)(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) / 100);
-@@ -101,6 +149,7 @@ uint64_t mcpx_apu_read(void *opaque, hwaddr addr, unsigned int size)
+@@ -101,6 +150,7 @@ uint64_t mcpx_apu_read(void *opaque, hwaddr addr, unsigned int size)
       *         (unsigned long long)addr, size, (unsigned long long)r);
       */
      (void)size;
@@ -200,7 +350,7 @@ index 459be77..d7b693e 100644
      return r;
  }
  
-@@ -115,6 +164,7 @@ void mcpx_apu_write(void *opaque, hwaddr addr, uint64_t val,
+@@ -115,6 +165,7 @@ void mcpx_apu_write(void *opaque, hwaddr addr, uint64_t val,
       */
      (void)size;
  
@@ -208,7 +358,7 @@ index 459be77..d7b693e 100644
      switch (addr) {
      case NV_PAPU_ISTS:
          qatomic_and(&d->regs[NV_PAPU_ISTS], ~(uint32_t)val);
-@@ -163,6 +213,7 @@ void mcpx_apu_write(void *opaque, hwaddr addr, uint64_t val,
+@@ -163,6 +214,7 @@ void mcpx_apu_write(void *opaque, hwaddr addr, uint64_t val,
          }
          break;
      }
@@ -216,7 +366,7 @@ index 459be77..d7b693e 100644
  }
  
  /* ============================================================
-@@ -203,10 +254,17 @@ typedef struct {
+@@ -203,10 +255,18 @@ typedef struct {
  
  static WaveOutState g_waveout = { 0 };
  
@@ -230,11 +380,12 @@ index 459be77..d7b693e 100644
  {
      (void)errp;
      d->monitor.stream = NULL;
++    d->monitor.ep_fifo_frame_valid = false;
 +    memset(&g_monitor_packet, 0, sizeof(g_monitor_packet));
      d->monitor.queued_bytes_low = 1024;
      d->monitor.queued_bytes_high = 3072;
  
-@@ -252,6 +310,7 @@ void mcpx_apu_monitor_init(MCPXAPUState *d, Error **errp)
+@@ -252,6 +312,7 @@ void mcpx_apu_monitor_init(MCPXAPUState *d, Error **errp)
  void mcpx_apu_monitor_finalize(MCPXAPUState *d)
  {
      (void)d;
@@ -242,14 +393,16 @@ index 459be77..d7b693e 100644
      if (xa2_is_active()) {
          xa2_shutdown();
          return;
-@@ -270,96 +329,64 @@ void mcpx_apu_monitor_finalize(MCPXAPUState *d)
+@@ -270,96 +331,89 @@ void mcpx_apu_monitor_finalize(MCPXAPUState *d)
  
  void mcpx_apu_monitor_frame(MCPXAPUState *d)
  {
 -    if ((d->ep_frame_div + 1) % 8) {
 -        return;
 -    }
--
++    if ((d->ep_frame_div + 1) % 8) return;
++    d->monitor.ep_fifo_frame_valid = false;
+ 
 -    /* XAudio2 path: render and submit a buffer */
 -    if (xa2_is_active()) {
 -        int buf_size = xa2_get_buffer_size();
@@ -269,16 +422,6 @@ index 459be77..d7b693e 100644
 -                    g_test_tone.phase += g_test_tone.phase_inc;
 -                    if (g_test_tone.phase >= 2.0 * M_PI)
 -                        g_test_tone.phase -= 2.0 * M_PI;
--                }
--            }
--
--            if (!g_audio_muted)
--                mixer_render(d->monitor.frame_buf, chunk);
-+    if ((d->ep_frame_div + 1) % 8) return;
- 
--            memcpy(xa2_tmp + out_offset, d->monitor.frame_buf, chunk * 2 * sizeof(int16_t));
--            out_offset += chunk;
--            remaining -= chunk;
 +    /* The DSP has filled eight chronological 32-sample slices. Keep that
 +     * native 256-sample block, and advance software voices exactly once at
 +     * 48 kHz. Rendering an entire host packet here both discarded the EP
@@ -290,11 +433,48 @@ index 459be77..d7b693e 100644
 +            d->monitor.frame_buf[i][1] = sample;
 +            g_test_tone.phase += g_test_tone.phase_inc;
 +            if (g_test_tone.phase >= 2.0 * M_PI) g_test_tone.phase -= 2.0 * M_PI;
++        }
++    }
++    mixer_render(d->monitor.frame_buf, MIXER_FRAME_SAMPLES);
++    if (g_audio_muted) {
++        memset(d->monitor.frame_buf, 0, sizeof(d->monitor.frame_buf));
++        /* Also silence earlier, not-yet-submitted slices of this packet. */
++        memset(g_monitor_packet.samples, 0, sizeof(g_monitor_packet.samples));
++    }
++
++    if (d->trace_dsp_state) {
++        uint64_t block = ++d->dsp_trace_audio_blocks;
++        if (mcpx_dsp_trace_audio_sample_due(block)) {
++            unsigned int nonzero = 0, peak = 0;
++            uint64_t square_sum = 0;
++            for (int i = 0; i < MIXER_FRAME_SAMPLES; ++i) {
++                for (int channel = 0; channel < 2; ++channel) {
++                    int sample = d->monitor.frame_buf[i][channel];
++                    unsigned int magnitude = (unsigned int)(sample < 0 ? -sample : sample);
++                    if (magnitude) nonzero++;
++                    if (magnitude > peak) peak = magnitude;
++                    square_sum += (uint64_t)magnitude * magnitude;
+                 }
+             }
+-
+-            if (!g_audio_muted)
+-                mixer_render(d->monitor.frame_buf, chunk);
+-
+-            memcpy(xa2_tmp + out_offset, d->monitor.frame_buf, chunk * 2 * sizeof(int16_t));
+-            out_offset += chunk;
+-            remaining -= chunk;
++            fprintf(stderr, "[DSPTRACE] event=audio-block block=%llu nonzero=%u/%u peak=%u mean-square=%llu ep-fifo-writes=%llu ep-fifo-captured=%llu monitor-point=%u\n",
++                    (unsigned long long)block, nonzero,
++                    (unsigned int)(MIXER_FRAME_SAMPLES * 2), peak,
++                    (unsigned long long)(square_sum / (MIXER_FRAME_SAMPLES * 2)),
++                    (unsigned long long)d->dsp_trace_ep_fifo_writes,
++                    (unsigned long long)d->dsp_trace_ep_fifo_captured,
++                    (unsigned int)d->monitor.point);
          }
 -
 -        xa2_submit_samples((const int16_t *)xa2_tmp, buf_size);
 -        return;
-     }
+-    }
 -
 -    if (!g_waveout.initialized) return;
 -
@@ -308,11 +488,6 @@ index 459be77..d7b693e 100644
 -        Sleep(1);
 -        qemu_mutex_lock(&d->lock);
 -        if (++wait_loops > 50) break;
-+    mixer_render(d->monitor.frame_buf, MIXER_FRAME_SAMPLES);
-+    if (g_audio_muted) {
-+        memset(d->monitor.frame_buf, 0, sizeof(d->monitor.frame_buf));
-+        /* Also silence earlier, not-yet-submitted slices of this packet. */
-+        memset(g_monitor_packet.samples, 0, sizeof(g_monitor_packet.samples));
      }
  
 -    /* Fill the large waveOut buffer by rendering multiple 256-sample frames */
@@ -387,7 +562,7 @@ index 459be77..d7b693e 100644
  }
  
  /* ============================================================
-@@ -432,6 +459,21 @@ static void se_frame(MCPXAPUState *d)
+@@ -432,6 +486,21 @@ static void se_frame(MCPXAPUState *d)
   * APU frame thread (background processing)
   * ============================================================ */
  
@@ -409,7 +584,7 @@ index 459be77..d7b693e 100644
  static void *mcpx_apu_frame_thread(void *arg)
  {
      MCPXAPUState *d = MCPX_APU_DEVICE(arg);
-@@ -446,6 +488,25 @@ static void *mcpx_apu_frame_thread(void *arg)
+@@ -446,6 +515,25 @@ static void *mcpx_apu_frame_thread(void *arg)
              continue;
          }
  
@@ -435,7 +610,7 @@ index 459be77..d7b693e 100644
          /* Always run the audio output loop — the software mixer and test tone
           * need continuous frame delivery regardless of APU register state.
           * The VP/DSP pipeline (se_frame) only runs when registers allow it. */
-@@ -460,8 +521,15 @@ static void *mcpx_apu_frame_thread(void *arg)
+@@ -460,8 +548,16 @@ static void *mcpx_apu_frame_thread(void *arg)
  
          if (apu_active && !g_test_tone.active) {
              /* Full pipeline: VP voices → DSP → monitor → waveOut */
@@ -446,12 +621,21 @@ index 459be77..d7b693e 100644
 +            /* No DSP wrote this tick. Preserve earlier native slices if
 +             * the APU halted in the middle of the eight-tick EP epoch. */
 +            int offset = (d->ep_frame_div % 8) * NUM_SAMPLES_PER_FRAME;
-+            memset(d->monitor.frame_buf + offset, 0,
-+                   NUM_SAMPLES_PER_FRAME * sizeof(d->monitor.frame_buf[0]));
++            if (!d->monitor.ep_fifo_frame_valid)
++                memset(d->monitor.frame_buf + offset, 0,
++                       NUM_SAMPLES_PER_FRAME * sizeof(d->monitor.frame_buf[0]));
              /* Lightweight: just monitor frame (test tone + software mixer) */
              mcpx_apu_monitor_frame(d);
              d->ep_frame_div++;
-@@ -516,6 +584,11 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
+@@ -499,6 +595,7 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
+ {
+     memset(d->regs, 0, sizeof(d->regs));
+     mcpx_apu_vp_reset(d);
++    mcpx_apu_dsp_reset(d);
+ 
+     if (d->gp.dsp) {
+         memset((void *)d->gp.dsp->core.pram_opcache, 0,
+@@ -516,6 +613,11 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
   * ============================================================ */
  
  MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
@@ -463,7 +647,7 @@ index 459be77..d7b693e 100644
  {
      MCPXAPUState *d = (MCPXAPUState *)calloc(1, sizeof(MCPXAPUState));
      if (!d) {
-@@ -526,6 +599,10 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
+@@ -526,6 +628,10 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
      g_apu_ram_ptr = ram_ptr;
      g_state = d;
      d->ram_ptr = ram_ptr;
@@ -474,7 +658,15 @@ index 459be77..d7b693e 100644
  
      d->set_irq = false;
      d->exiting = false;
-@@ -614,8 +691,12 @@ void mcpx_apu_dispatch_mmio(MCPXAPUState *d, hwaddr addr, uint64_t val,
+@@ -581,6 +687,7 @@ void mcpx_apu_shutdown(MCPXAPUState *d)
+ 
+     qemu_thread_join(&d->apu_thread);
+     mcpx_apu_vp_finalize(d);
++    mcpx_apu_dsp_finalize(d);
+     mcpx_apu_monitor_finalize(d);
+ 
+     free(d);
+@@ -614,8 +721,12 @@ void mcpx_apu_dispatch_mmio(MCPXAPUState *d, hwaddr addr, uint64_t val,
          if (is_write) {
              mcpx_apu_write(d, addr, val, size);
          }
@@ -488,7 +680,7 @@ index 459be77..d7b693e 100644
  }
  
  /* ============================================================
-@@ -630,6 +711,10 @@ uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size)
+@@ -630,6 +741,10 @@ uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size)
          return mcpx_apu_vp_read(d, addr - 0x20000, size);
      } else if (addr < 0x20000) {
          return mcpx_apu_read(d, (hwaddr)addr, size);
@@ -499,14 +691,1057 @@ index 459be77..d7b693e 100644
      }
      return 0;
  }
+diff --git a/src/apu/apu_dma.c b/src/apu/apu_dma.c
+new file mode 100644
+index 0000000..338444d
+--- /dev/null
++++ b/src/apu/apu_dma.c
+@@ -0,0 +1,695 @@
++/*
++ * MCPX DSP DMA
++ *
++ * Copyright (c) 2015 espes
++ * Copyright (c) 2020-2026 Matt Borgerson
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include "apu_dma.h"
++#include "apu_dma_regs.h"
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#define MIN(a, b) ((a) < (b) ? (a) : (b))
++#define DSP_SPACE_X 0
++#define DSP_SPACE_Y 1
++#define DSP_SPACE_P 2
++
++#ifdef DEBUG
++
++const char *buffer_names[] = {
++    "fifo0",            /* 0x0 */
++    "fifo1",            /* 0x1 */
++    "fifo2",            /* 0x2 */
++    "fifo3",            /* 0x3 */
++    "<unknown-0x4>",    /* 0x4 */
++    "<unknown-0x5>",    /* 0x5 */
++    "<unknown-0x6>",    /* 0x6 */
++    "<unknown-0x7>",    /* 0x7 */
++    "<unknown-0x8>",    /* 0x8 */
++    "<unknown-0x9>",    /* 0x9 */
++    "<unknown-0xa>",    /* 0xA */
++    "<unknown-0xb>",    /* 0xB */
++    "<unknown-0xc>",    /* 0xC */
++    "<unknown-0xd>",    /* 0xD */
++    "scratch-circular", /* 0xE */
++    "scratch"           /* 0xF */
++};
++
++const char *format_names[] = {
++    "8 bit",         /* 0x0 */
++    "16 bit",        /* 0x1 */
++    "24 bit msb",    /* 0x2 */
++    "32 bit",        /* 0x3 */
++    "<invalid-0x4>", /* 0x4 */
++    "<invalid-0x5>", /* 0x5 */
++    "24 bit lsb",    /* 0x6 */
++    "<invalid-0x7>"  /* 0x7 */
++};
++
++const char *space_names[] = {
++    "x", /* DSP_SPACE_X, 0x0 */
++    "y", /* DSP_SPACE_Y, 0x1 */
++    "p"  /* DSP_SPACE_P, 0x2 */
++};
++
++#endif
++
++static bool scratch_circular_copy(
++    DSPDMAState *s,
++    uint32_t     scratch_base,
++    uint32_t    *scratch_offset,
++    uint32_t     scratch_size,
++    uint32_t     transfer_size,
++    uint8_t     *scratch_buf,
++    int          direction)
++{
++    uint32_t buf_offset = 0;
++
++    /* The ring is a whole number of 32-bit units (probed: a size field of
++     * 0, nominally one byte, wrapped like a four-byte ring), and the
++     * offset wraps only when a transfer crosses the ring's end. An offset
++     * at or past the end is neither clamped nor wrapped: the data lands at
++     * base + offset and the offset advances past it (probed with offsets
++     * of size and size + $100 on a $800 ring). The offset's low two bits
++     * are dropped too (probed: offset 2 landed at 0 and wrote back $10). */
++    scratch_size = (scratch_size + 3) & ~3u;
++    *scratch_offset &= ~3u;
++
++    while (transfer_size > 0) {
++        size_t chunk_size = transfer_size;
++        bool crosses = false;
++        uint32_t scratch_addr = scratch_base + *scratch_offset;
++
++        if (*scratch_offset < scratch_size) {
++            size_t bytes_until_wrap = scratch_size - *scratch_offset;
++
++            crosses = transfer_size >= bytes_until_wrap;
++            chunk_size = MIN(transfer_size, bytes_until_wrap);
++        }
++
++        if (!s->scratch_rw(s->rw_opaque, &scratch_buf[buf_offset], scratch_addr,
++                           chunk_size, direction)) return false;
++
++        *scratch_offset = crosses ? 0 : *scratch_offset + chunk_size;
++        transfer_size -= chunk_size;
++        buf_offset += chunk_size;
++    }
++    return true;
++}
++
++/* Node descriptors and transfer data share one flat DSP address space:
++ *   $0000-$17FF -> X, $1800-$1FFF -> Y, $2800-$37FF -> P.
++ * Everything else is unmapped. Silicon reads unmapped addresses as zero and
++ * drops writes to them, silently - no error, no abort - and a transfer that
++ * runs off the end of a window simply continues into the next one (probed:
++ * dsp_offset $17F8 for 32 words read the tail of X and then Y:$0000+). So
++ * addresses are mapped per access instead of range-checked per node. */
++static bool dsp_dma_map(uint32_t addr, int *space, uint32_t *offset)
++{
++    if (addr < 0x1800) {
++        *space = DSP_SPACE_X;
++        *offset = addr;
++    } else if (addr < 0x2000) {
++        *space = DSP_SPACE_Y;
++        *offset = addr - 0x1800;
++    } else if (addr >= 0x2800 && addr < 0x3800) {
++        *space = DSP_SPACE_P;
++        *offset = addr - 0x2800;
++    } else if (addr & 0x4000) {
++        /* Unmapped like every other hole, in every context probed. The AC3
++         * encoder relies on it: its resident command $0c builds a bit-14
++         * FIFO #1 node for each IEC 61937 stuffing run, so the microcode
++         * emits zeros without keeping any. Decoding the flag as
++         * X:(offset & $3FFF) instead makes those transfers carry a stale
++         * frame image behind a valid-looking preamble. */
++        return false;
++    } else {
++        return false;
++    }
++    return true;
++}
++
++static uint32_t dsp_dma_mem_read(DSPDMAState *s, uint32_t addr)
++{
++    int space;
++    uint32_t offset;
++
++    if (!dsp_dma_map(addr, &space, &offset)) {
++        return 0;
++    }
++    return s->mem_read(s->mem_opaque, space, offset);
++}
++
++static void dsp_dma_mem_write(DSPDMAState *s, uint32_t addr, uint32_t value)
++{
++    int space;
++    uint32_t offset;
++
++    if (dsp_dma_map(addr, &space, &offset)) {
++        s->mem_write(s->mem_opaque, space, offset, value);
++    }
++}
++
++/* Buffer bytes per item, and DSP words consumed per item. Format 3 carries a
++ * 32-bit sample in a *pair* of DSP words; formats 4, 5 and 7 are rejected by
++ * the engine (see dsp_dma_format_valid). */
++typedef struct DSPDMAFormat {
++    uint8_t item_size;
++    uint8_t words_per_item;
++} DSPDMAFormat;
++
++static const DSPDMAFormat dsp_dma_formats[8] = {
++    [0] = { 1, 1 }, /* 8 bit, offset binary */
++    [1] = { 2, 1 }, /* 16 bit */
++    [2] = { 4, 1 }, /* 24 bit, MSB-aligned in a 32-bit slot */
++    [3] = { 4, 2 }, /* 32 bit, from a DSP word pair */
++    [6] = { 4, 1 }, /* 24 bit, LSB-aligned in a 32-bit slot */
++};
++
++static bool dsp_dma_format_valid(uint32_t format)
++{
++    return dsp_dma_formats[format].item_size != 0;
++}
++
++/* Format 0 is not a truncation. Silicon rounds on bit 15, saturates, and
++ * emits offset binary: $008000 -> $81 (not $80), $7FFF00 -> $FF (saturates
++ * rather than wrapping to $00), $800000 -> $00, $FE8000 -> $7F. */
++static uint8_t dsp_dma_pack8(uint32_t word)
++{
++    int32_t v = (int32_t)((word & 0xffffff) ^ 0x800000) - 0x800000;
++    int32_t r = (v + 0x8000) >> 16;
++
++    if (r > 127) {
++        r = 127;
++    }
++    return (uint8_t)(r + 128);
++}
++
++/* Serialize one item's DSP words into buffer bytes. Byte orders are as
++ * probed on silicon; note that format 2 is MSB-aligned (a leading zero
++ * byte), which is what distinguishes it from format 6. */
++static void dsp_dma_pack_item(uint32_t format, const uint32_t *words,
++                              uint8_t *out)
++{
++    uint32_t w = words[0] & 0xffffff;
++
++    switch (format) {
++    case 0:
++        out[0] = dsp_dma_pack8(w);
++        break;
++    case 1:
++        out[0] = (w >> 8) & 0xff;
++        out[1] = (w >> 16) & 0xff;
++        break;
++    case 2:
++        out[0] = 0;
++        out[1] = w & 0xff;
++        out[2] = (w >> 8) & 0xff;
++        out[3] = (w >> 16) & 0xff;
++        break;
++    case 3: {
++        uint32_t w1 = words[1] & 0xffffff;
++        out[0] = (w >> 16) & 0xff;
++        out[1] = w1 & 0xff;
++        out[2] = (w1 >> 8) & 0xff;
++        out[3] = (w1 >> 16) & 0xff;
++        break;
++    }
++    case 6:
++        out[0] = w & 0xff;
++        out[1] = (w >> 8) & 0xff;
++        out[2] = (w >> 16) & 0xff;
++        out[3] = 0;
++        break;
++    }
++}
++
++/* Inverse of dsp_dma_pack_item. The format-3 pairing is probed in this
++ * direction too (an all-$EE buffer produced $EE0000, $EEEEEE word pairs);
++ * the format-0 expansion is the natural inverse and is not probed. */
++static void dsp_dma_unpack_item(uint32_t format, const uint8_t *in,
++                                uint32_t *words)
++{
++    switch (format) {
++    case 0:
++        words[0] = (uint32_t)(in[0] ^ 0x80) << 16;
++        break;
++    case 1:
++        words[0] = ((uint32_t)in[1] << 16) | ((uint32_t)in[0] << 8);
++        break;
++    case 2:
++        words[0] = ((uint32_t)in[3] << 16) | ((uint32_t)in[2] << 8) | in[1];
++        break;
++    case 3:
++        words[0] = (uint32_t)in[0] << 16;
++        words[1] = ((uint32_t)in[3] << 16) | ((uint32_t)in[2] << 8) | in[1];
++        break;
++    case 6:
++        words[0] = ((uint32_t)in[2] << 16) | ((uint32_t)in[1] << 8) | in[0];
++        break;
++    }
++}
++
++/* DSP address of word `w` of item `item`. The stride counts items, and an
++ * item's words are consecutive: linear transfers place item i at
++ * dsp_offset + i * dsp_step * words_per_item (probed with word pairs at
++ * step 2: items four words apart, each pair intact); interleaved ones
++ * place channel `ch` of block `b` at dsp_offset + (b + ch*dsp_step) *
++ * words_per_item (probed with step != block count, so the stride is the
++ * control word's, not the block count, and with the word-pair format,
++ * whose items land as intact pairs rather than overlapping by a word). */
++static uint32_t dsp_dma_item_addr(uint32_t dsp_offset, int32_t dsp_step,
++                                  bool interleave, uint32_t channel_count,
++                                  uint32_t words_per_item, uint32_t item,
++                                  uint32_t w)
++{
++    if (interleave) {
++        uint32_t block = item / channel_count;
++        uint32_t ch = item % channel_count;
++        return dsp_offset + (block + ch * dsp_step) * words_per_item + w;
++    }
++    return dsp_offset + item * dsp_step * words_per_item + w;
++}
++
++/* End (exclusive) of the mapped-or-unmapped window containing addr, so a
++ * consecutive address run splits into segments that stay in one space.
++ * Mirrors dsp_dma_map's regions. */
++static uint32_t dsp_dma_window_end(uint32_t addr)
++{
++    if (addr < 0x1800) {
++        return 0x1800;
++    }
++    if (addr < 0x2000) {
++        return 0x2000;
++    }
++    if (addr < 0x2800) {
++        return 0x2800;
++    }
++    if (addr < 0x3800) {
++        return 0x3800;
++    }
++    return (addr | 0x3fff) + 1;
++}
++
++/* Bulk transfer staging: one mem_*_run call per mapped window instead of a
++ * mapped call per word. Unmapped stretches keep silicon's behaviour - reads
++ * as zero, writes dropped - and a run continues across window boundaries
++ * exactly as the per-word path does. */
++static void dsp_dma_words_read(DSPDMAState *s, uint32_t addr, uint32_t *out,
++                               uint32_t count)
++{
++    while (count) {
++        int space;
++        uint32_t offset;
++        uint32_t n = MIN(count, dsp_dma_window_end(addr) - addr);
++
++        if (dsp_dma_map(addr, &space, &offset)) {
++            s->mem_read_run(s->mem_opaque, space, offset, out, n);
++        } else {
++            memset(out, 0, n * sizeof(*out));
++        }
++        addr += n;
++        out += n;
++        count -= n;
++    }
++}
++
++static void dsp_dma_words_write(DSPDMAState *s, uint32_t addr,
++                                const uint32_t *vals, uint32_t count)
++{
++    while (count) {
++        int space;
++        uint32_t offset;
++        uint32_t n = MIN(count, dsp_dma_window_end(addr) - addr);
++
++        if (dsp_dma_map(addr, &space, &offset)) {
++            s->mem_write_run(s->mem_opaque, space, offset, vals, n);
++        }
++        addr += n;
++        vals += n;
++        count -= n;
++    }
++}
++
++/* A chain whose next-pointer loops back on itself runs forever on silicon
++ * (probed: DMA_CONTROL still reads RUNNING after the node has been replayed
++ * indefinitely) - harmless there, because the DSP keeps executing and can
++ * issue STOP. xemu runs the chain synchronously inside the MMIO write, so
++ * the same node would hang the emulator; bail out instead, leaving RUNNING
++ * set as silicon does. */
++#define DSP_DMA_MAX_NODES 4096
++
++static void dsp_dma_run(DSPDMAState *s)
++{
++    unsigned int nodes = 0;
++
++    if (!(s->control & DMA_CONTROL_RUNNING)
++        || (s->control & DMA_CONTROL_FROZEN)) {
++        return;
++    }
++    if (!s->mem_read || !s->mem_write || !s->scratch_rw || !s->fifo_rw) {
++        s->error = true;
++        return;
++    }
++
++    /* Only the EOL bit ends a chain. A pointer of $0000 fetches the
++     * descriptor at X:$0000 like any other address (probed: a next pointer
++     * of zero ran the node seeded there, and an unmapped pointer reads a
++     * zero descriptor whose zero next pointer does the same). */
++    while (!(s->next_block & NODE_POINTER_EOL)) {
++        uint32_t addr = s->next_block & NODE_POINTER_VAL;
++
++        if (++nodes > DSP_DMA_MAX_NODES) {
++            fprintf(stderr, "DSP DMA: chain exceeded %d nodes at %04x; "
++                            "abandoning it (looping descriptor?)\n",
++                    DSP_DMA_MAX_NODES, addr);
++            break;
++        }
++
++        /* The descriptor is seven consecutive words; a chain visits dozens
++         * of nodes a kick, so read it in one crossing rather than seven. */
++        uint32_t desc[7];
++        if (s->mem_read_run) {
++            dsp_dma_words_read(s, addr, desc, 7);
++        } else {
++            for (int i = 0; i < 7; i++) {
++                desc[i] = dsp_dma_mem_read(s, addr + i);
++            }
++        }
++        uint32_t next_block     = desc[0];
++        uint32_t control        = desc[1];
++        uint32_t count          = desc[2];
++        uint32_t dsp_offset     = desc[3];
++        uint32_t scratch_offset = desc[4];
++        uint32_t scratch_base   = desc[5];
++        uint32_t scratch_size   = desc[6] + 1;
++
++        s->next_block = next_block;
++        if (s->next_block & NODE_POINTER_EOL) {
++            s->eol = true;
++        }
++
++        /* Control word, as probed: intr_sel (bits 2-3) selects the
++         * completion interrupt, value n != 0 raising interrupt-status bit
++         * 3+n when the node completes; dsp_step (bits 14-23) is the DSP
++         * address stride in items, per item for linear transfers (0 =
++         * re-access one address) and per channel for interleaved ones.
++         * The stride is a signed 10-bit value: $3FF, $3FE and $200 walked
++         * below dsp_offset, $1FF above it. Bits 9 and 13 showed
++         * no effect and are ignored. */
++        bool     dsp_interleave          = (control >> 0) & 1;
++        bool     direction               = control & NODE_CONTROL_DIRECTION;
++        uint32_t intr_sel                = (control >>  2) & 0x3;
++        bool     buffer_offset_writeback = (control >>  4) & 1;
++        uint32_t buf_id                  = (control >>  5) & 0xf;
++        uint32_t format                  = (control >> 10) & 0x7;
++        int32_t  dsp_step                = (int32_t)(control << 8) >> 22;
++
++        /* Buffer ids $4-$7 and $C-$D are rejected outright, as are formats
++         * 4, 5 and 7: silicon transfers nothing, raises the error bit, and
++         * still latches EOL, leaving the chain to continue. */
++        bool buf_valid = buf_id <= 0x3 || (buf_id >= 0x8 && buf_id <= 0xb) ||
++                         buf_id == 0xe || buf_id == 0xf;
++        if (!buf_valid || !dsp_dma_format_valid(format)) {
++            s->error = true;
++            s->pending_interrupts |= DMA_INTERRUPT_ERROR;
++            continue;
++        }
++
++        uint32_t item_size = dsp_dma_formats[format].item_size;
++        uint32_t words_per_item = dsp_dma_formats[format].words_per_item;
++
++        uint32_t channel_count = dsp_interleave ? (count & 0xF) + 1 : 1;
++        uint32_t items = dsp_interleave ? (count >> 4) * channel_count : count;
++        size_t transfer_size = (size_t)items * item_size;
++
++        /* A malformed descriptor must not trigger an unbounded host
++         * allocation. Real audio nodes are much smaller than this cap. */
++        if (transfer_size > 16u * 1024u * 1024u) {
++            s->error = true;
++            s->pending_interrupts |= DMA_INTERRUPT_ERROR;
++            continue;
++        }
++
++        /* The buffer side moves 32-bit units: a node whose byte count is
++         * not a whole number of them is rejected like a bad format
++         * (probed: 1, 2, 3, 5 and 6 bytes raised the error bit and moved
++         * nothing, in both directions, interleaved and into a FIFO; 4
++         * bytes moved). */
++        if (transfer_size & 3) {
++            s->error = true;
++            s->pending_interrupts |= DMA_INTERRUPT_ERROR;
++            continue;
++        }
++
++        if (transfer_size == 0) {
++            goto node_done;
++        }
++
++        // FIXME: Remove this intermediate buffer
++        if (transfer_size > s->scratch_buf_size) {
++            uint8_t *new_buf = (uint8_t *)realloc(s->scratch_buf, transfer_size);
++            if (!new_buf) {
++                s->error = true;
++                break;
++            }
++            s->scratch_buf = new_buf;
++            s->scratch_buf_size = transfer_size;
++        }
++        uint8_t *scratch_buf = s->scratch_buf;
++
++        /* A linear step-1 node touches one consecutive DSP address run, and
++         * that is what the overlay loads and sample moves all are. Stage the
++         * words and cross into the DSP once per mapped window; strides,
++         * interleave, and backends without bulk callbacks keep the scalar
++         * path. */
++        uint32_t total_words = items * words_per_item;
++        bool bulk = !dsp_interleave && dsp_step == 1
++            && s->mem_read_run && s->mem_write_run;
++        if (bulk && total_words > s->word_buf_words) {
++            uint32_t *new_buf = (uint32_t *)realloc(
++                s->word_buf, (size_t)total_words * sizeof(uint32_t));
++            if (!new_buf) {
++                s->error = true;
++                break;
++            }
++            s->word_buf = new_buf;
++            s->word_buf_words = total_words;
++        }
++
++        /* Scratch ($F, and the $8-$B aliases) is addressed by scratch_offset
++         * alone; scratch_base is ignored. Its offset advances by
++         * the bytes moved, which is what a writeback stores (probed for $F
++         * and $8, both directions). */
++        if (direction) {
++            if (bulk) {
++                dsp_dma_words_read(s, dsp_offset, s->word_buf, total_words);
++                for (uint32_t i = 0; i < items; i++) {
++                    dsp_dma_pack_item(format,
++                                      &s->word_buf[i * words_per_item],
++                                      &scratch_buf[i * item_size]);
++                }
++            } else {
++                for (uint32_t i = 0; i < items; i++) {
++                    uint32_t words[2] = { 0, 0 };
++                    for (uint32_t w = 0; w < words_per_item; w++) {
++                        words[w] = dsp_dma_mem_read(s, dsp_dma_item_addr(
++                            dsp_offset, dsp_step, dsp_interleave,
++                            channel_count, words_per_item, i, w));
++                    }
++                    dsp_dma_pack_item(format, words,
++                                      &scratch_buf[i * item_size]);
++                }
++            }
++        }
++
++        bool transfer_ok;
++        if (buf_id <= 0x3) {
++            transfer_ok = s->fifo_rw(s->rw_opaque, scratch_buf, buf_id,
++                                     transfer_size, direction);
++        } else if (buf_id == 0xE) {
++            transfer_ok = scratch_circular_copy(s, scratch_base,
++                &scratch_offset, scratch_size, transfer_size, scratch_buf,
++                direction);
++        } else { /* $8-$B behave as $F on silicon */
++            transfer_ok = s->scratch_rw(s->rw_opaque, scratch_buf,
++                                        scratch_offset, transfer_size,
++                                        direction);
++            scratch_offset += (uint32_t)transfer_size;
++        }
++        if (!transfer_ok) {
++            s->error = true;
++            s->pending_interrupts |= DMA_INTERRUPT_ERROR;
++            continue;
++        }
++
++        if (!direction) {
++            if (bulk) {
++                for (uint32_t i = 0; i < items; i++) {
++                    dsp_dma_unpack_item(format, &scratch_buf[i * item_size],
++                                        &s->word_buf[i * words_per_item]);
++                }
++                dsp_dma_words_write(s, dsp_offset, s->word_buf, total_words);
++            } else {
++                for (uint32_t i = 0; i < items; i++) {
++                    uint32_t words[2] = { 0, 0 };
++                    dsp_dma_unpack_item(format, &scratch_buf[i * item_size],
++                                        words);
++                    for (uint32_t w = 0; w < words_per_item; w++) {
++                        dsp_dma_mem_write(s, dsp_dma_item_addr(
++                            dsp_offset, dsp_step, dsp_interleave,
++                            channel_count, words_per_item, i, w), words[w]);
++                    }
++                }
++            }
++        }
++
++node_done:
++        if (buffer_offset_writeback) {
++            dsp_dma_mem_write(s, addr + 4, scratch_offset);
++        }
++
++        if (intr_sel) {
++            s->pending_interrupts |= 1 << (3 + intr_sel);
++        }
++    }
++}
++
++void dsp_dma_reset(DSPDMAState *s)
++{
++    if (!s) return;
++    s->pending_interrupts = 0;
++    s->configuration = 0;
++    s->control = 0;
++    s->start_block = 0;
++    s->next_block = 0;
++    s->error = false;
++    s->eol = false;
++    s->eol_held = false;
++    s->dma_read_count = 0;
++}
++
++void dsp_dma_destroy(DSPDMAState *s)
++{
++    if (!s) return;
++    free(s->scratch_buf);
++    free(s->word_buf);
++    s->scratch_buf = NULL;
++    s->word_buf = NULL;
++    s->scratch_buf_size = s->word_buf_words = 0;
++}
++
++void dsp_dma_completion_seen(DSPDMAState *s)
++{
++    if (s->eol && (s->next_block & NODE_POINTER_EOL) &&
++        !(s->control & DMA_CONTROL_FROZEN)) {
++        s->control &= ~DMA_CONTROL_RUNNING;
++        s->dma_read_count = 0;
++    }
++}
++
++uint32_t dsp_dma_read(DSPDMAState *s, DSPDMARegister reg)
++{
++    switch (reg) {
++    case DMA_CONFIGURATION:
++        return s->configuration;
++    case DMA_CONTROL:
++        /* The chain ran inside the START write, but silicon takes
++         * microseconds, and the microcode confirms the start by polling
++         * RUNNING before it waits for EOL. So RUNNING stays readable until
++         * the program has looked at the engine: two reads here, or one of
++         * the interrupt status with EOL set (dsp_dma_completion_seen).
++         * Then the register reads 0, as probed after every completed
++         * chain: not RUNNING, and not STOPPED either. The next pointer
++         * identifies the current chain's completion, including an empty
++         * chain. EOL itself is sticky and may belong to an earlier chain. */
++        if ((s->control & DMA_CONTROL_RUNNING) &&
++            (s->next_block & NODE_POINTER_EOL) &&
++            !(s->control & DMA_CONTROL_FROZEN)) {
++            s->dma_read_count++;
++            if (s->dma_read_count > 2) {
++                s->control &= ~DMA_CONTROL_RUNNING;
++                s->dma_read_count = 0;
++            }
++        }
++        return s->control;
++    case DMA_START_BLOCK:
++        return s->start_block;
++    case DMA_NEXT_BLOCK:
++        return s->next_block;
++    default:
++        break;
++    }
++    return 0;
++}
++
++void dsp_dma_write(DSPDMAState *s, DSPDMARegister reg, uint32_t v)
++{
++    switch (reg) {
++    case DMA_CONFIGURATION:
++        s->configuration = v;
++        break;
++    case DMA_CONTROL:
++        switch(v & DMA_CONTROL_ACTION) {
++        case DMA_CONTROL_ACTION_START:
++            s->control |= DMA_CONTROL_RUNNING;
++            s->dma_read_count = 0;
++            break;
++        case DMA_CONTROL_ACTION_STOP:
++            /* DMA_CONTROL reads 0 after a STOP (probed on an idle engine);
++             * the STOPPED bit has never been seen set. */
++            s->control &= ~DMA_CONTROL_RUNNING;
++            break;
++        case DMA_CONTROL_ACTION_FREEZE:
++            /* A FREEZE right behind a START let the chain move its data
++             * but held EOL back: interrupt status stayed 0 with NEXT_BLOCK
++             * already at the terminator. The chain has run here
++             * by the time the DSP can freeze it, so hold the latch until
++             * the UNFREEZE. */
++            s->control |= DMA_CONTROL_FROZEN;
++            if (s->eol) {
++                s->eol = false;
++                s->eol_held = true;
++            }
++            break;
++        case DMA_CONTROL_ACTION_UNFREEZE:
++            s->control &= ~DMA_CONTROL_FROZEN;
++            if (s->eol_held) {
++                s->eol_held = false;
++                s->eol = true;
++            }
++            break;
++        default:
++            /* NOP, ABORT and the unassigned encodings are silent no-ops on
++             * silicon: nothing starts, DMA_CONTROL reads back 0 and
++             * NEXT_BLOCK keeps the pointer the DSP wrote. */
++            break;
++        }
++        dsp_dma_run(s);
++        break;
++    case DMA_START_BLOCK:
++        s->start_block = v;
++        break;
++    case DMA_NEXT_BLOCK:
++        s->next_block = v;
++        break;
++    default:
++        break;
++    }
++}
+diff --git a/src/apu/apu_dma.h b/src/apu/apu_dma.h
+new file mode 100644
+index 0000000..f93313b
+--- /dev/null
++++ b/src/apu/apu_dma.h
+@@ -0,0 +1,108 @@
++/*
++ * MCPX DSP DMA
++ *
++ * Copyright (c) 2015 espes
++ * Copyright (c) 2018-2026 Matt Borgerson
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef HW_XBOX_MCPX_DSP_DMA_H
++#define HW_XBOX_MCPX_DSP_DMA_H
++
++#include <stdint.h>
++#include <stdbool.h>
++#include <stddef.h>
++
++typedef bool (*dsp_scratch_rw_func)(
++    void *opaque, uint8_t *ptr, uint32_t addr, size_t len, bool dir);
++typedef bool (*dsp_fifo_rw_func)(
++    void *opaque, uint8_t *ptr, unsigned int index, size_t len, bool dir);
++
++#define DMA_CONTROL_RUNNING (1 << 4)
++#define DMA_CONTROL_STOPPED (1 << 5)
++
++typedef enum DSPDMARegister {
++    DMA_CONFIGURATION,
++    DMA_CONTROL,
++    DMA_START_BLOCK,
++    DMA_NEXT_BLOCK,
++} DSPDMARegister;
++
++/* Memory access callbacks for backend-agnostic DMA */
++typedef uint32_t (*dsp_dma_mem_read_func)(void *opaque, int space, uint32_t addr);
++typedef void (*dsp_dma_mem_write_func)(void *opaque, int space, uint32_t addr, uint32_t value);
++
++/* Bulk variants covering a run of consecutive addresses in one space, so a
++ * linear node crosses into the DSP once per window rather than once per
++ * word. Optional: a backend that leaves these NULL gets the per-word path. */
++typedef void (*dsp_dma_mem_read_run_func)(
++    void *opaque, int space, uint32_t addr, uint32_t *out, uint32_t count);
++typedef void (*dsp_dma_mem_write_run_func)(
++    void *opaque, int space, uint32_t addr, const uint32_t *vals,
++    uint32_t count);
++
++typedef struct DSPDMAState {
++    /* DSP memory access (backend-agnostic) */
++    void *mem_opaque;
++    dsp_dma_mem_read_func mem_read;
++    dsp_dma_mem_write_func mem_write;
++    dsp_dma_mem_read_run_func mem_read_run;
++    dsp_dma_mem_write_run_func mem_write_run;
++
++    /* System memory access */
++    void *rw_opaque;
++    dsp_scratch_rw_func scratch_rw;
++    dsp_fifo_rw_func fifo_rw;
++    bool is_gp;
++
++    /* Per-node completion interrupts selected by control bits 2-3 (silicon:
++     * value n raises interrupt-status bit 3+n at $FFFFC5). Cleared by the
++     * DSP writing those bits back, like the EOL bit. */
++    uint32_t pending_interrupts;
++
++    uint32_t configuration;
++    uint32_t control;
++    uint32_t start_block;
++    uint32_t next_block;
++
++    bool error;
++    bool eol;
++    /* EOL reached while frozen: latched at the UNFREEZE. */
++    bool eol_held;
++
++    /* Reads of DMA_CONTROL while RUNNING; the third reads the engine as
++     * idle (see dsp_dma_read). */
++    uint32_t dma_read_count;
++
++    /* Bounce buffer for one node's payload, grown on demand. Per engine:
++     * the GP and EP run their DMA from their own threads, so a shared
++     * buffer is a data race and a use-after-free on reallocation. */
++    uint8_t *scratch_buf;
++    size_t scratch_buf_size;
++
++    /* Word staging for the bulk path, grown on demand; per engine for the
++     * same reasons as scratch_buf. */
++    uint32_t *word_buf;
++    size_t word_buf_words;
++} DSPDMAState;
++
++uint32_t dsp_dma_read(DSPDMAState *s, DSPDMARegister reg);
++void dsp_dma_reset(DSPDMAState *s);
++void dsp_dma_destroy(DSPDMAState *s);
++/* The DSP has read the interrupt status with EOL set: the engine is idle. */
++void dsp_dma_completion_seen(DSPDMAState *s);
++void dsp_dma_write(DSPDMAState *s, DSPDMARegister reg, uint32_t v);
++
++#endif
+diff --git a/src/apu/apu_dma_regs.h b/src/apu/apu_dma_regs.h
+new file mode 100644
+index 0000000..356a5f4
+--- /dev/null
++++ b/src/apu/apu_dma_regs.h
+@@ -0,0 +1,54 @@
++/*
++ * MCPX DSP DMA
++ *
++ * Copyright (c) 2015 espes
++ * Copyright (c) 2020-2026 Matt Borgerson
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef HW_XBOX_MCPX_DSP_DMA_REGS_H
++#define HW_XBOX_MCPX_DSP_DMA_REGS_H
++
++#define DMA_CONFIGURATION_AUTOSTART (1 << 0)
++#define DMA_CONFIGURATION_AUTOREADY (1 << 1)
++#define DMA_CONFIGURATION_IOC_CLEAR (1 << 2)
++#define DMA_CONFIGURATION_EOL_CLEAR (1 << 3)
++#define DMA_CONFIGURATION_ERR_CLEAR (1 << 4)
++
++#define DMA_CONTROL_ACTION 0x7
++#define DMA_CONTROL_ACTION_NOP 0
++#define DMA_CONTROL_ACTION_START 1
++#define DMA_CONTROL_ACTION_STOP 2
++#define DMA_CONTROL_ACTION_FREEZE 3
++#define DMA_CONTROL_ACTION_UNFREEZE 4
++#define DMA_CONTROL_ACTION_ABORT 5
++#define DMA_CONTROL_FROZEN (1 << 3)
++#define DMA_CONTROL_RUNNING (1 << 4)
++#define DMA_CONTROL_STOPPED (1 << 5)
++
++/* Interrupt-status ($FFFFC5) bits raised by the DMA engine. Bit 7 is EOL;
++ * bit 10 is the error flag a rejected node raises (silicon-probed: the node
++ * transfers nothing, sets this bit, and still latches EOL). */
++#define DMA_INTERRUPT_EOL (1 << 7)
++#define DMA_INTERRUPT_ERROR (1 << 10)
++
++/* Only the EOL bit ends a chain; a pointer of $0000 fetches the descriptor
++ * at X:$0000 like any other address (silicon-probed, see dsp_dma_run). */
++#define NODE_POINTER_VAL 0x3fff
++#define NODE_POINTER_EOL (1 << 14)
++
++#define NODE_CONTROL_DIRECTION (1 << 1)
++
++#endif
 diff --git a/src/apu/apu_dsp.c b/src/apu/apu_dsp.c
-index de14f26..5761534 100644
+index de14f26..e69a617 100644
 --- a/src/apu/apu_dsp.c
 +++ b/src/apu/apu_dsp.c
-@@ -28,6 +28,148 @@
+@@ -1,17 +1,6 @@
+ /*
+- * MCPX APU DSP (GP/EP) - Stub implementation
++ * MCPX APU DSP (GP/EP) execution, DMA, and frame scheduling.
+  *
+- * The DSP Global Processor (GP) and Encode Processor (EP) handle effects
+- * processing (reverb, chorus, etc.) and final output encoding. The full
+- * DSP is ~3000 lines of DSP56300 emulation code.
+- *
+- * For initial audio, we bypass the DSP entirely:
+- * - VP mixbins are passed directly to the EP output
+- * - GP effects processing is skipped
+- * - The EP just copies mixbin 0/1 (front L/R) to the monitor buffer
+- *
+- * This gives us basic voice playback without effects. The DSP can be
+- * connected later for reverb, EQ, and other processing.
+  *
+  * Copyright (c) 2012 espes
+  * Copyright (c) 2019-2025 Matt Borgerson
+@@ -24,10 +13,513 @@
+ 
+ #include "apu_state.h"
+ #include "fpconv.h"
++#include "apu_dma_regs.h"
++#include "apu_dsp_trace.h"
+ 
  #include <stdlib.h>
  #include <string.h>
  
++#define DSP_FRAME_CYCLES 88875u
++#define DSP_START_FRAME_INTERRUPT (1u << 1)
++#define DSP_DMA_EOL_INTERRUPT (1u << 7)
++#define DSP_PERIPHERAL_BASE 0xFFFF80u
++#define DSP_PERIPHERAL_END 0x1000000u
++#define DSP_DMA_FIFO_BOUND_MASK 0x00ffff00u
++
++static uint32_t dsp_dma_memory_read(void *opaque, int space, uint32_t addr)
++{
++    DSPState *dsp = opaque;
++    uint32_t value = 0;
++    if (dsp && dsp->engine_ready && space >= MCPX_DSP_SPACE_X &&
++        space <= MCPX_DSP_SPACE_P &&
++        mcpx_dsp_engine_read(&dsp->engine, (McpxDspMemorySpace)space,
++                             addr, &value))
++        return value;
++    return 0;
++}
++
++static void dsp_dma_memory_write(void *opaque, int space, uint32_t addr,
++                                uint32_t value)
++{
++    DSPState *dsp = opaque;
++    if (dsp && dsp->engine_ready && space >= MCPX_DSP_SPACE_X &&
++        space <= MCPX_DSP_SPACE_P)
++        mcpx_dsp_engine_write(&dsp->engine, (McpxDspMemorySpace)space,
++                              addr, value);
++}
++
++static void dsp_dma_memory_read_run(void *opaque, int space, uint32_t addr,
++                                    uint32_t *out, uint32_t count)
++{
++    for (uint32_t i = 0; i < count; ++i)
++        out[i] = dsp_dma_memory_read(opaque, space, addr + i);
++}
++
++static void dsp_dma_memory_write_run(void *opaque, int space, uint32_t addr,
++                                     const uint32_t *values, uint32_t count)
++{
++    for (uint32_t i = 0; i < count; ++i)
++        dsp_dma_memory_write(opaque, space, addr + i, values[i]);
++}
++
++/* Resolve a scratch/FIFO logical address through the guest SGE table without
++ * allowing an invalid table entry or page to wrap into another RAM region. */
++static bool dsp_dma_sge_copy(DSPState *dsp, bool fifo, uint8_t *bytes,
++                             uint32_t addr, size_t len, bool write_guest)
++{
++    MCPXAPUState *apu = dsp ? dsp->apu : NULL;
++    uint32_t table_reg, max_reg;
++    uint64_t ram_limit;
++    if (!apu || !apu->ram_ptr) return false;
++    if (dsp->is_gp) {
++        table_reg = fifo ? NV_PAPU_GPFADDR : NV_PAPU_GPSADDR;
++        max_reg = fifo ? NV_PAPU_GPFMAXSGE : NV_PAPU_GPSMAXSGE;
++    } else {
++        table_reg = fifo ? NV_PAPU_EPFADDR : NV_PAPU_EPSADDR;
++        max_reg = fifo ? NV_PAPU_EPFMAXSGE : NV_PAPU_EPSMAXSGE;
++    }
++    ram_limit = MIN((uint64_t)apu->ram_size, (uint64_t)APU_PHYS_MASK + 1u);
++    while (len) {
++        uint64_t entry = (uint64_t)(apu->regs[table_reg] & APU_PHYS_MASK) +
++                         (uint64_t)(addr / TARGET_PAGE_SIZE) * 8u;
++        uint32_t page;
++        size_t offset = addr % TARGET_PAGE_SIZE;
++        size_t chunk = MIN(len, TARGET_PAGE_SIZE - offset);
++        uint64_t physical;
++        if (addr / TARGET_PAGE_SIZE > apu->regs[max_reg] || entry > ram_limit ||
++            sizeof(page) > ram_limit - entry) return false;
++        memcpy(&page, apu->ram_ptr + (size_t)entry, sizeof(page));
++        physical = (uint64_t)(page & APU_PHYS_MASK) + offset;
++        if (physical > ram_limit || chunk > ram_limit - physical) return false;
++        if (write_guest) memcpy(apu->ram_ptr + (size_t)physical, bytes, chunk);
++        else memcpy(bytes, apu->ram_ptr + (size_t)physical, chunk);
++        addr += (uint32_t)chunk;
++        bytes += chunk;
++        len -= chunk;
++    }
++    return true;
++}
++
++static bool dsp_dma_scratch_rw(void *opaque, uint8_t *bytes, uint32_t addr,
++                               size_t len, bool dir)
++{
++    DSPState *dsp = opaque;
++    bool ok = dsp_dma_sge_copy(dsp, false, bytes, addr, len, dir);
++    if (!ok && dsp) dsp->dma.error = true;
++    return ok;
++}
++
++static bool dsp_dma_fifo_rw(void *opaque, uint8_t *bytes, unsigned int index,
++                            size_t len, bool dir)
++{
++    DSPState *dsp = opaque;
++    MCPXAPUState *apu = dsp ? dsp->apu : NULL;
++    uint32_t base_reg, end_reg, cur_reg, cur, end;
++    uint8_t *original_bytes = bytes;
++    size_t original_len = len;
++    if (!apu || index >= (dir ? 4u : 2u)) {
++        if (dsp) dsp->dma.error = true;
++        return false;
++    }
++    if (dsp->is_gp) {
++        base_reg = (dir ? NV_PAPU_GPOFBASE0 : NV_PAPU_GPIFBASE0) + 0x10u * index;
++        end_reg = (dir ? NV_PAPU_GPOFEND0 : NV_PAPU_GPIFEND0) + 0x10u * index;
++        cur_reg = (dir ? NV_PAPU_GPOFCUR0 : NV_PAPU_GPIFCUR0) + 0x10u * index;
++    } else {
++        base_reg = (dir ? NV_PAPU_EPOFBASE0 : NV_PAPU_EPIFBASE0) + 0x10u * index;
++        end_reg = (dir ? NV_PAPU_EPOFEND0 : NV_PAPU_EPIFEND0) + 0x10u * index;
++        cur_reg = (dir ? NV_PAPU_EPOFCUR0 : NV_PAPU_EPIFCUR0) + 0x10u * index;
++    }
++    cur = apu->regs[cur_reg] & 0x00ffffffu;
++    end = apu->regs[end_reg] & DSP_DMA_FIFO_BOUND_MASK;
++    if (cur >= end) { dsp->dma.error = true; return false; }
++    while (len) {
++        size_t chunk = len;
++        bool wraps = cur < end && len >= (size_t)(end - cur);
++        if (cur < end) chunk = MIN(chunk, (size_t)(end - cur));
++        if (!dsp_dma_sge_copy(dsp, true, bytes, cur, chunk, dir)) {
++            dsp->dma.error = true;
++            return false;
++        }
++        bytes += chunk;
++        len -= chunk;
++        cur = wraps ? (apu->regs[base_reg] & DSP_DMA_FIFO_BOUND_MASK)
++                    : cur + (uint32_t)chunk;
++    }
++    apu->regs[cur_reg] = cur;
++    bool full_ep_fifo0_block = !dsp->is_gp && dir && index == 0 &&
++        original_len == sizeof(apu->monitor.frame_buf);
++    if (full_ep_fifo0_block && apu->trace_dsp_state)
++        apu->dsp_trace_ep_fifo_writes++;
++    if (full_ep_fifo0_block &&
++        (apu->monitor.point == MCPX_APU_DEBUG_MON_EP ||
++         apu->monitor.point == MCPX_APU_DEBUG_MON_GP_OR_EP)) {
++        if (apu->trace_dsp_state) apu->dsp_trace_ep_fifo_captured++;
++        memcpy(apu->monitor.frame_buf, original_bytes,
++               sizeof(apu->monitor.frame_buf));
++        apu->monitor.ep_fifo_frame_valid = true;
++    }
++    return true;
++}
++
 +/* Program-memory readback and the boot ROM's initial scratch transfer.
 + * The reset transition, SGE layout and 0x800-word transfer follow xemu's
 + * hw/xbox/mcpx/apu/dsp/gp_ep.c and dsp_c.c (commit 478b4f4). This models the
@@ -588,8 +1823,220 @@ index de14f26..5761534 100644
 +    for (i = 0; i < APU_DSP_BOOT_WORDS; ++i) image[i] &= 0x00ffffffu;
 +    memcpy(dsp->core.pram, image, sizeof(image));
 +    memset((void *)dsp->core.pram_opcache, 0, sizeof(dsp->core.pram_opcache));
++    mcpx_dsp_engine_invalidate_cache(&dsp->engine);
 +    dsp_boot_trace(d, is_gp, image, table, max_sge, NULL);
 +    return true;
++}
++
++static uint64_t dsp_cycles_total(const DSPState *dsp)
++{
++    return dsp->cycles_base +
++        (dsp->engine_ready ? dsp56300_cycle_count(dsp->engine.jit) : 0);
++}
++
++static uint32_t dsp_read_peripheral(void *opaque, uint32_t address)
++{
++    DSPState *dsp = (DSPState *)opaque;
++    switch (address) {
++    case 0xFFFFB0: return dsp->timer_ctl;
++    case 0xFFFFB2: return dsp->timer_period;
++    case 0xFFFFB3:
++        /* The current frame counter is validated for GP. Keep the EP timer
++         * dormant until its per-frame accounting matches hardware. */
++        if (dsp->is_gp && (dsp->timer_ctl & 1))
++            return (uint32_t)(dsp_cycles_total(dsp) - dsp->timer_base) & 0xFFFFFFu;
++        return 0;
++    case 0xFFFFC5:
++        return dsp->interrupts | dsp->dma.pending_interrupts |
++               (dsp->dma.eol ? DSP_DMA_EOL_INTERRUPT : 0);
++    case 0xFFFFD4: return dsp_dma_read(&dsp->dma, DMA_NEXT_BLOCK);
++    case 0xFFFFD5: return dsp_dma_read(&dsp->dma, DMA_START_BLOCK);
++    case 0xFFFFD6: return dsp_dma_read(&dsp->dma, DMA_CONTROL);
++    case 0xFFFFD7: return dsp_dma_read(&dsp->dma, DMA_CONFIGURATION);
++    default: return 0;
++    }
++}
++
++static void dsp_write_peripheral(void *opaque, uint32_t address, uint32_t value)
++{
++    DSPState *dsp = (DSPState *)opaque;
++    switch (address) {
++    case 0xFFFFB0:
++        dsp->timer_ctl = value;
++        break;
++    case 0xFFFFB1:
++        dsp->timer_base = dsp_cycles_total(dsp);
++        break;
++    case 0xFFFFB2:
++        dsp->timer_period = value;
++        break;
++    case 0xFFFFC4:
++        if (value & 1) {
++            dsp56300_set_halt_requested(dsp->engine.jit, true);
++            dsp->halted_since_reset = true;
++            if (dsp->frame_starts_pending)
++                dsp->interrupts |= DSP_START_FRAME_INTERRUPT;
++        }
++        break;
++    case 0xFFFFC5:
++        dsp->interrupts &= ~value;
++        if ((value & DSP_START_FRAME_INTERRUPT) &&
++            dsp->frame_starts_pending && dsp->halted_since_reset)
++            dsp->frame_starts_pending--;
++        dsp->dma.pending_interrupts &= ~value;
++        if (value & DSP_DMA_EOL_INTERRUPT) {
++            dsp_dma_completion_seen(&dsp->dma);
++            dsp->dma.eol = false;
++        }
++        break;
++    case 0xFFFFD4:
++        dsp_dma_write(&dsp->dma, DMA_NEXT_BLOCK, value);
++        break;
++    case 0xFFFFD5:
++        dsp_dma_write(&dsp->dma, DMA_START_BLOCK, value);
++        break;
++    case 0xFFFFD6:
++        dsp_dma_write(&dsp->dma, DMA_CONTROL, value);
++        break;
++    case 0xFFFFD7:
++        dsp_dma_write(&dsp->dma, DMA_CONFIGURATION, value);
++        break;
++    default:
++        break;
++    }
++}
++
++static bool dsp_engine_init(DSPState *dsp)
++{
++    Dsp56300MemoryRegion x_regions[3], y_regions[2], p_regions[1];
++    Dsp56300CallbackRegion peripheral = {
++        .opaque = dsp,
++        .read = dsp_read_peripheral,
++        .write = dsp_write_peripheral
++    };
++    Dsp56300MemoryMap map = {0};
++    uint32_t x_count = 0, y_count = 0;
++    const uint32_t x_words = dsp->is_gp ? DSP_XRAM_SIZE : 0x0C00u;
++    const uint32_t y_words = dsp->is_gp ? DSP_YRAM_SIZE : 0x0100u;
++
++    x_regions[x_count++] = (Dsp56300MemoryRegion){
++        .start = 0, .end = x_words,
++        .kind = DSP56300_REGION_BUFFER,
++        .data = { .buffer = { .base = dsp->core.xram, .offset = 0 } }
++    };
++    if (dsp->is_gp) {
++        x_regions[x_count++] = (Dsp56300MemoryRegion){
++            .start = 0x1400, .end = 0x1800,
++            .kind = DSP56300_REGION_BUFFER,
++            .data = { .buffer = { .base = dsp->core.xram, .offset = 0x0C00 } }
++        };
++    }
++    x_regions[x_count++] = (Dsp56300MemoryRegion){
++        .start = DSP_PERIPHERAL_BASE, .end = DSP_PERIPHERAL_END,
++        .kind = DSP56300_REGION_CALLBACK,
++        .data = { .callback = peripheral }
++    };
++    y_regions[y_count++] = (Dsp56300MemoryRegion){
++        .start = 0, .end = y_words,
++        .kind = DSP56300_REGION_BUFFER,
++        .data = { .buffer = { .base = dsp->core.yram, .offset = 0 } }
++    };
++    y_regions[y_count++] = (Dsp56300MemoryRegion){
++        .start = DSP_PERIPHERAL_BASE, .end = DSP_PERIPHERAL_END,
++        .kind = DSP56300_REGION_CALLBACK,
++        .data = { .callback = peripheral }
++    };
++    p_regions[0] = (Dsp56300MemoryRegion){
++        .start = 0, .end = DSP_PRAM_SIZE,
++        .kind = DSP56300_REGION_BUFFER,
++        .data = { .buffer = { .base = dsp->core.pram, .offset = 0 } }
++    };
++    map.x_regions = x_regions;
++    map.x_count = x_count;
++    map.y_regions = y_regions;
++    map.y_count = y_count;
++    map.p_regions = p_regions;
++    map.p_count = 1;
++    return mcpx_dsp_engine_init_with_map(&dsp->engine, &map);
++}
++
++static void dsp_reset_core(DSPState *dsp)
++{
++    dsp->core.pc = 0;
++    dsp->core.cycle_count = 0;
++    dsp->save_cycles = 0;
++    dsp->interrupts = 0;
++    dsp->frame_starts_pending = 0;
++    dsp->timer_ctl = 0;
++    dsp->timer_period = 0;
++    dsp->timer_base = 0;
++    dsp->cycles_base = 0;
++    dsp->halted_since_reset = false;
++    dsp_dma_reset(&dsp->dma);
++    dsp->dma_fallback_logged = false;
++    dsp->trace_frame_count = 0;
++    dsp->trace_events_logged = 0;
++    if (dsp->engine_ready) mcpx_dsp_engine_reset(&dsp->engine);
++}
++
++static void dsp_run_frame(DSPState *dsp, bool start_frame)
++{
++    Dsp56300State state;
++    if (!dsp || !dsp->engine_ready) return;
++
++    if (start_frame) {
++        dsp->frame_starts_pending++;
++        if (dsp56300_halt_requested(dsp->engine.jit))
++            dsp->interrupts |= DSP_START_FRAME_INTERRUPT;
++    }
++    dsp->cycles_base += DSP_FRAME_CYCLES;
++    /* The JIT adds to its saved budget. A peripheral HALT leaves positive
++     * unused cycles there; discard those between hardware frames, while
++     * retaining a completed instruction's negative cycle overshoot. State
++     * synchronization is safe here, outside the execution callback. */
++    dsp56300_get_state(dsp->engine.jit, &state);
++    if (state.cycle_budget > 0) state.cycle_budget = 0;
++    state.cycle_count = 0;
++    state.halt_requested = false;
++    dsp56300_set_state(dsp->engine.jit, &state);
++    dsp56300_run(dsp->engine.jit, (int32_t)DSP_FRAME_CYCLES);
++    dsp56300_get_state(dsp->engine.jit, &state);
++    if (state.power_state != 0)
++        dsp56300_set_halt_requested(dsp->engine.jit, true);
++
++    dsp->core.pc = state.pc;
++    dsp->core.cycle_count = dsp56300_cycle_count(dsp->engine.jit);
++    dsp->core.is_idle = dsp56300_halt_requested(dsp->engine.jit);
++    memcpy(dsp->core.registers, state.registers, sizeof(state.registers));
++    memcpy(dsp->core.stack, state.stack, sizeof(state.stack));
++
++    if (dsp->apu->trace_dsp_state) {
++        const uint64_t trace_frame = ++dsp->trace_frame_count;
++        uint32_t omr = state.registers[DSP56300_REG_OMR];
++        uint32_t sp = state.registers[DSP56300_REG_SP];
++        uint32_t sc = state.registers[DSP56300_REG_SC];
++        uint32_t events = mcpx_dsp_trace_events(omr, sp,
++                                                state.interrupts.pending_bits[0]);
++        const char *core = dsp->is_gp ? "GP" : "EP";
++        if (mcpx_dsp_trace_sample_due(trace_frame)) {
++            fprintf(stderr, "[DSPTRACE] core=%s event=frame-sample frame=%llu PC=%06X OMR=%06X SP=%02X SC=%02X\n",
++                    core, (unsigned long long)trace_frame, state.pc, omr, sp, sc);
++        }
++        if ((events & MCPX_DSP_TRACE_SEN) &&
++            !(dsp->trace_events_logged & MCPX_DSP_TRACE_SEN)) {
++            fprintf(stderr, "[DSPTRACE] core=%s event=SEN-enabled frame=%llu PC=%06X OMR=%06X SP=%02X SC=%02X\n",
++                    core, (unsigned long long)trace_frame, state.pc, omr, sp, sc);
++            dsp->trace_events_logged |= MCPX_DSP_TRACE_SEN;
++        }
++        uint32_t stack_events = events & MCPX_DSP_TRACE_STACK_MASK &
++                                ~dsp->trace_events_logged;
++        if (stack_events) {
++            fprintf(stderr, "[DSPTRACE] core=%s event=stack-status flags=%02X frame=%llu PC=%06X OMR=%06X SP=%02X SC=%02X pending=%016llX\n",
++                    core, stack_events, (unsigned long long)trace_frame, state.pc, omr, sp, sc,
++                    (unsigned long long)state.interrupts.pending_bits[0]);
++            dsp->trace_events_logged |= stack_events;
++        }
++    }
 +}
 +
 +static bool dsp_mmio_valid(hwaddr addr, unsigned int size)
@@ -630,20 +2077,24 @@ index de14f26..5761534 100644
 +        const uint32_t enabled = NV_PAPU_GPRST_GPRST | NV_PAPU_GPRST_GPDSPRST;
 +        uint32_t old = regs[addr], value = (uint32_t)val;
 +        if ((value & enabled) != enabled) {
-+            /* Reset execution bookkeeping; on-chip RAM survives reset, as
-+             * in xemu. The passthrough DSP does not execute instructions. */
-+            dsp->core.pc = 0;
-+            dsp->core.cycle_count = 0;
-+            dsp->save_cycles = 0;
++            /* On-chip RAM survives reset; execution state does not. */
++            dsp_reset_core(dsp);
 +        } else if ((old & enabled) != enabled) {
-+            dsp_bootstrap(d, dsp, is_gp);
++            if (dsp_bootstrap(d, dsp, is_gp)) dsp_reset_core(dsp);
 +        }
 +        /* Preserve the full reset register, including unmodeled bits. A
 +         * failed transfer leaves old PRAM intact and still records this
 +         * reset write; another load requires a new reset-release edge. */
 +        regs[addr] = value;
 +    } else {
-+        dsp->core.pram[(addr - NV_PAPU_GPPMEM) / 4] = (uint32_t)val & 0x00ffffffu;
++        if (dsp->engine_ready) {
++            mcpx_dsp_engine_write(&dsp->engine, MCPX_DSP_SPACE_P,
++                                  (addr - NV_PAPU_GPPMEM) / 4,
++                                  (uint32_t)val);
++        } else {
++            dsp->core.pram[(addr - NV_PAPU_GPPMEM) / 4] =
++                (uint32_t)val & 0x00ffffffu;
++        }
 +        dsp->core.pram_opcache[(addr - NV_PAPU_GPPMEM) / 4] = NULL;
 +    }
 +    qemu_mutex_unlock(&d->lock);
@@ -652,7 +2103,7 @@ index de14f26..5761534 100644
  /* ── DSP command doorbell acknowledgement ────────────────────────────────
   *
   * DirectSound does not stop at creating the device. It hands the audio DSP a
-@@ -103,7 +245,11 @@ static void dsp_ack_frame(MCPXAPUState *d)
+@@ -103,7 +595,11 @@ static void dsp_ack_frame(MCPXAPUState *d)
      if (!d->ram_ptr)
          return;
      for (i = 0; i < s_dsp_ack_count; i++) {
@@ -665,7 +2116,7 @@ index de14f26..5761534 100644
          if (*slot) {
              static int shown[APU_DSP_ACK_MAX];
              if (shown[i]++ < 3)
-@@ -114,8 +260,22 @@ static void dsp_ack_frame(MCPXAPUState *d)
+@@ -114,21 +610,94 @@ static void dsp_ack_frame(MCPXAPUState *d)
      }
  }
  
@@ -681,13 +2132,449 @@ index de14f26..5761534 100644
 +
  void mcpx_apu_dsp_init(MCPXAPUState *d)
  {
+-    /* Allocate minimal DSP state for GP and EP.
+-     * We need these to exist so reset doesn't crash,
+-     * but they won't actually run DSP programs. */
 +    s_ack_state = d;
 +    if (!getenv("RECOMP_APU_DSP_ACK_FRAME_ONLY")) xbox_SetAckTick(dsp_ack_poll);
 +    const char *trace = getenv("RECOMP_APU_TRACE_DSP_BOOT");
 +    d->trace_dsp_boot = trace && strcmp(trace, "1") == 0;
-     /* Allocate minimal DSP state for GP and EP.
-      * We need these to exist so reset doesn't crash,
-      * but they won't actually run DSP programs. */
++    trace = getenv("RECOMP_APU_TRACE_DSP_STATE");
++    d->trace_dsp_state = trace && strcmp(trace, "1") == 0;
++    if (d->trace_dsp_state)
++        fprintf(stderr, "[APU] DSP state trace enabled (frame-boundary samples; transient events may be missed)\n");
++    /* GP and EP have independent registers, memories, and DSP engines. */
+     d->gp.dsp = (DSPState *)calloc(1, sizeof(DSPState));
+     d->ep.dsp = (DSPState *)calloc(1, sizeof(DSPState));
+ 
+     if (d->gp.dsp) d->gp.dsp->is_gp = true;
+     if (d->ep.dsp) d->ep.dsp->is_gp = false;
++    if (d->gp.dsp) {
++        d->gp.dsp->apu = d;
++        d->gp.dsp->engine_ready = dsp_engine_init(d->gp.dsp);
++        d->gp.dsp->dma.mem_opaque = d->gp.dsp;
++        d->gp.dsp->dma.mem_read = dsp_dma_memory_read;
++        d->gp.dsp->dma.mem_write = dsp_dma_memory_write;
++        d->gp.dsp->dma.mem_read_run = dsp_dma_memory_read_run;
++        d->gp.dsp->dma.mem_write_run = dsp_dma_memory_write_run;
++        d->gp.dsp->dma.rw_opaque = d->gp.dsp;
++        d->gp.dsp->dma.scratch_rw = dsp_dma_scratch_rw;
++        d->gp.dsp->dma.fifo_rw = dsp_dma_fifo_rw;
++        d->gp.dsp->dma.is_gp = true;
++    }
++    if (d->ep.dsp) {
++        d->ep.dsp->apu = d;
++        d->ep.dsp->engine_ready = dsp_engine_init(d->ep.dsp);
++        d->ep.dsp->dma.mem_opaque = d->ep.dsp;
++        d->ep.dsp->dma.mem_read = dsp_dma_memory_read;
++        d->ep.dsp->dma.mem_write = dsp_dma_memory_write;
++        d->ep.dsp->dma.mem_read_run = dsp_dma_memory_read_run;
++        d->ep.dsp->dma.mem_write_run = dsp_dma_memory_write_run;
++        d->ep.dsp->dma.rw_opaque = d->ep.dsp;
++        d->ep.dsp->dma.scratch_rw = dsp_dma_scratch_rw;
++        d->ep.dsp->dma.fifo_rw = dsp_dma_fifo_rw;
++        d->ep.dsp->dma.is_gp = false;
++    }
+ 
+     d->gp.realtime = false;
+     d->ep.realtime = false;
+ 
+-    fprintf(stderr, "[APU] DSP GP/EP initialized (STUBBED - passthrough mode)\n");
++    fprintf(stderr, "[APU] DSP GP/EP initialized (GP=%s EP=%s; "
++                    "direct-mixdown output fallback active)\n",
++            d->gp.dsp && d->gp.dsp->engine_ready ? "DSP56300" : "unavailable",
++            d->ep.dsp && d->ep.dsp->engine_ready ? "DSP56300" : "unavailable");
++}
++
++void mcpx_apu_dsp_finalize(MCPXAPUState *d)
++{
++    if (!d) return;
++    if (d->gp.dsp) {
++        dsp_dma_destroy(&d->gp.dsp->dma);
++        if (d->gp.dsp->engine_ready)
++            mcpx_dsp_engine_destroy(&d->gp.dsp->engine);
++        free(d->gp.dsp);
++        d->gp.dsp = NULL;
++    }
++    if (d->ep.dsp) {
++        dsp_dma_destroy(&d->ep.dsp->dma);
++        if (d->ep.dsp->engine_ready)
++            mcpx_dsp_engine_destroy(&d->ep.dsp->engine);
++        free(d->ep.dsp);
++        d->ep.dsp = NULL;
++    }
++    if (s_ack_state == d) s_ack_state = NULL;
++}
++
++void mcpx_apu_dsp_reset(MCPXAPUState *d)
++{
++    if (!d) return;
++    d->monitor.ep_fifo_frame_valid = false;
++    if (d->gp.dsp) dsp_reset_core(d->gp.dsp);
++    if (d->ep.dsp) dsp_reset_core(d->ep.dsp);
+ }
+ 
+ void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
+@@ -141,30 +710,43 @@ void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
+ void mcpx_apu_dsp_frame(MCPXAPUState *d,
+                          float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME])
+ {
+-    /* Bypass DSP: take mixbin 0 (front-left) and mixbin 1 (front-right)
+-     * and write them directly to the monitor frame buffer as the final
+-     * EP output.
+-     *
+-     * The Xbox DirectSound typically routes:
+-     *   Mixbin 0 = Front Left
+-     *   Mixbin 1 = Front Right
+-     *   Mixbin 2 = Center (often unused in stereo)
+-     *   Mixbin 3 = LFE
+-     *   Mixbin 4-5 = Rear L/R
+-     *
+-     * For stereo output, bins 0 and 1 are what we want.
+-     */
++    /* Run GP effects and EP encoding for this 32-sample tick. A complete
++     * native EP PCM block owns the eight-tick monitor epoch; otherwise
++     * direct mixdown supplies each tick's fallback stereo slice. */
+ 
+     int off = (d->ep_frame_div % 8) * NUM_SAMPLES_PER_FRAME;
+ 
++    if (mixbins && d->gp.dsp && d->gp.dsp->engine_ready &&
++        (d->gp.regs[NV_PAPU_GPRST] &
++         (NV_PAPU_GPRST_GPRST | NV_PAPU_GPRST_GPDSPRST)) ==
++        (NV_PAPU_GPRST_GPRST | NV_PAPU_GPRST_GPDSPRST)) {
++        for (int b = 0; b < NUM_MIXBINS; ++b) {
++            for (int i = 0; i < NUM_SAMPLES_PER_FRAME; ++i) {
++                d->gp.dsp->core.xram[0x0C00 + b * NUM_SAMPLES_PER_FRAME + i] =
++                    float_to_24b(mixbins[b][i]);
++            }
++        }
++        dsp_run_frame(d->gp.dsp, true);
++        g_dbg.gp.cycles = d->gp.dsp->core.cycle_count;
++    }
++    if (d->ep.dsp && d->ep.dsp->engine_ready &&
++        (d->ep.regs[NV_PAPU_EPRST] &
++         (NV_PAPU_GPRST_GPRST | NV_PAPU_GPRST_GPDSPRST)) ==
++        (NV_PAPU_GPRST_GPRST | NV_PAPU_GPRST_GPDSPRST)) {
++        dsp_run_frame(d->ep.dsp, (d->ep_frame_div % 8) == 0);
++        g_dbg.ep.cycles = d->ep.dsp->core.cycle_count;
++    }
++
++    /* Retain the compatibility handshake for command behavior beyond the
++     * modeled DSP execution and DMA path. */
+     dsp_ack_frame(d);
+ 
+-    if (d->monitor.point != MCPX_APU_DEBUG_MON_VP) {
++    if (d->monitor.point != MCPX_APU_DEBUG_MON_VP &&
++        !d->monitor.ep_fifo_frame_valid) {
+         for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++) {
+             /* Bins 2..31 used to be computed and then dropped on the floor.
+-             * On hardware the GP and EP mix the submixes down; here they are
+-             * stubs, so thirty of thirty-two bins were discarded every frame
+-             * with no counter anywhere to say so.
++             * On hardware the GP and EP mix the submixes down. The fallback
++             * includes all bins when native output is unavailable.
+              *
+              * Measured on Jet Set Radio Future, one 200 s gameplay run, with
+              * a positive control moving beside it:
+@@ -213,6 +795,4 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d,
+         }
+     }
+ 
+-    g_dbg.gp.cycles = 0;
+-    g_dbg.ep.cycles = 0;
+ }
+diff --git a/src/apu/apu_dsp_engine.c b/src/apu/apu_dsp_engine.c
+new file mode 100644
+index 0000000..dec9e6a
+--- /dev/null
++++ b/src/apu/apu_dsp_engine.c
+@@ -0,0 +1,189 @@
++#include "apu_dsp_engine.h"
++
++#include <string.h>
++
++static void set_buffer_region(Dsp56300MemoryRegion *region, uint32_t *base,
++                              uint32_t words)
++{
++    region->start = 0;
++    region->end = words;
++    region->kind = DSP56300_REGION_BUFFER;
++    region->data.buffer.base = base;
++    region->data.buffer.offset = 0;
++}
++
++static void set_callback_region(Dsp56300MemoryRegion *region, uint32_t start,
++                                uint32_t end,
++                                const Dsp56300CallbackRegion *callback)
++{
++    region->start = start;
++    region->end = end;
++    region->kind = DSP56300_REGION_CALLBACK;
++    region->data.callback = *callback;
++}
++
++static bool copy_regions(Dsp56300MemoryRegion *destination,
++                         const Dsp56300MemoryRegion *source, uint32_t count)
++{
++    uint32_t i, j;
++    if (count > MCPX_DSP_MAX_MEMORY_REGIONS || (count && !source)) return false;
++    for (i = 0; i < count; ++i) {
++        if (source[i].start >= source[i].end) return false;
++        if (source[i].kind == DSP56300_REGION_BUFFER &&
++            !source[i].data.buffer.base) return false;
++        if (source[i].kind == DSP56300_REGION_CALLBACK &&
++            (!source[i].data.callback.read || !source[i].data.callback.write))
++            return false;
++        for (j = 0; j < i; ++j) {
++            if (source[i].start < source[j].end &&
++                source[j].start < source[i].end) return false;
++        }
++        destination[i] = source[i];
++    }
++    return true;
++}
++
++bool mcpx_dsp_engine_init_with_map(McpxDspEngine *engine,
++                                   const Dsp56300MemoryMap *memory_map)
++{
++    if (!engine) return false;
++    memset(engine, 0, sizeof(*engine));
++    if (!memory_map ||
++        !copy_regions(engine->x_regions, memory_map->x_regions,
++                      memory_map->x_count) ||
++        !copy_regions(engine->y_regions, memory_map->y_regions,
++                      memory_map->y_count) ||
++        !copy_regions(engine->p_regions, memory_map->p_regions,
++                      memory_map->p_count))
++        return false;
++
++    engine->memory_map.x_regions = engine->x_regions;
++    engine->memory_map.x_count = memory_map->x_count;
++    engine->memory_map.y_regions = engine->y_regions;
++    engine->memory_map.y_count = memory_map->y_count;
++    engine->memory_map.p_regions = engine->p_regions;
++    engine->memory_map.p_count = memory_map->p_count;
++    engine->create_info.memory_map = engine->memory_map;
++    engine->jit = dsp56300_create(&engine->create_info);
++    return engine->jit != NULL;
++}
++
++bool mcpx_dsp_engine_init(McpxDspEngine *engine,
++                          uint32_t *xram, uint32_t x_words,
++                          uint32_t *yram, uint32_t y_words,
++                          uint32_t *pram, uint32_t p_words)
++{
++    return mcpx_dsp_engine_init_with_peripherals(
++        engine, xram, x_words, yram, y_words, pram, p_words,
++        0, 0, NULL, NULL);
++}
++
++bool mcpx_dsp_engine_init_with_peripherals(
++    McpxDspEngine *engine,
++    uint32_t *xram, uint32_t x_words,
++    uint32_t *yram, uint32_t y_words,
++    uint32_t *pram, uint32_t p_words,
++    uint32_t peripheral_start, uint32_t peripheral_end,
++    const Dsp56300CallbackRegion *x_peripheral,
++    const Dsp56300CallbackRegion *y_peripheral)
++{
++    Dsp56300MemoryRegion x_regions[2], y_regions[2], p_regions[1];
++    Dsp56300MemoryMap memory_map = {0};
++    uint32_t x_count = 1, y_count = 1;
++    if (!engine || !xram || !yram || !pram || !x_words || !y_words || !p_words)
++        return false;
++    if ((x_peripheral || y_peripheral) &&
++        (peripheral_start >= peripheral_end ||
++         (x_peripheral && (!x_peripheral->read || !x_peripheral->write)) ||
++         (y_peripheral && (!y_peripheral->read || !y_peripheral->write))))
++        return false;
++
++    set_buffer_region(&x_regions[0], xram, x_words);
++    set_buffer_region(&y_regions[0], yram, y_words);
++    if (x_peripheral) {
++        set_callback_region(&x_regions[x_count++], peripheral_start,
++                            peripheral_end, x_peripheral);
++    }
++    if (y_peripheral) {
++        set_callback_region(&y_regions[y_count++], peripheral_start,
++                            peripheral_end, y_peripheral);
++    }
++    set_buffer_region(&p_regions[0], pram, p_words);
++    memory_map.x_regions = x_regions;
++    memory_map.x_count = x_count;
++    memory_map.y_regions = y_regions;
++    memory_map.y_count = y_count;
++    memory_map.p_regions = p_regions;
++    memory_map.p_count = 1;
++    return mcpx_dsp_engine_init_with_map(engine, &memory_map);
++}
++
++void mcpx_dsp_engine_destroy(McpxDspEngine *engine)
++{
++    if (!engine) return;
++    dsp56300_destroy(engine->jit);
++    memset(engine, 0, sizeof(*engine));
++}
++
++void mcpx_dsp_engine_reset(McpxDspEngine *engine)
++{
++    if (engine && engine->jit) dsp56300_reset(engine->jit);
++}
++
++void mcpx_dsp_engine_step(McpxDspEngine *engine)
++{
++    if (engine && engine->jit) dsp56300_step(engine->jit);
++}
++
++void mcpx_dsp_engine_run(McpxDspEngine *engine, int32_t cycles)
++{
++    if (engine && engine->jit && cycles > 0)
++        dsp56300_run(engine->jit, cycles);
++}
++
++void mcpx_dsp_engine_invalidate_cache(McpxDspEngine *engine)
++{
++    if (engine && engine->jit) dsp56300_invalidate_cache(engine->jit);
++}
++
++bool mcpx_dsp_engine_get_pc(const McpxDspEngine *engine, uint32_t *pc)
++{
++    Dsp56300State state;
++    if (!engine || !engine->jit || !pc) return false;
++    dsp56300_get_state(engine->jit, &state);
++    *pc = state.pc;
++    return true;
++}
++
++static bool to_ffi_space(McpxDspMemorySpace space, Dsp56300MemSpace *out)
++{
++    if (!out) return false;
++    switch (space) {
++    case MCPX_DSP_SPACE_X: *out = DSP56300_MEM_SPACE_X; return true;
++    case MCPX_DSP_SPACE_Y: *out = DSP56300_MEM_SPACE_Y; return true;
++    case MCPX_DSP_SPACE_P: *out = DSP56300_MEM_SPACE_P; return true;
++    default: return false;
++    }
++}
++
++bool mcpx_dsp_engine_read(const McpxDspEngine *engine,
++                          McpxDspMemorySpace space, uint32_t address,
++                          uint32_t *value)
++{
++    Dsp56300MemSpace ffi_space;
++    if (!engine || !engine->jit || !value || !to_ffi_space(space, &ffi_space))
++        return false;
++    *value = dsp56300_read_memory(engine->jit, ffi_space, address);
++    return true;
++}
++
++bool mcpx_dsp_engine_write(McpxDspEngine *engine,
++                           McpxDspMemorySpace space, uint32_t address,
++                           uint32_t value)
++{
++    Dsp56300MemSpace ffi_space;
++    if (!engine || !engine->jit || !to_ffi_space(space, &ffi_space))
++        return false;
++    dsp56300_write_memory(engine->jit, ffi_space, address, value & 0x00ffffffu);
++    return true;
++}
+diff --git a/src/apu/apu_dsp_engine.h b/src/apu/apu_dsp_engine.h
+new file mode 100644
+index 0000000..d307a41
+--- /dev/null
++++ b/src/apu/apu_dsp_engine.h
+@@ -0,0 +1,51 @@
++/* C11 adapter for the MIT-licensed DSP56300 JIT library. */
++#pragma once
++
++#include "dsp56300.h"
++
++#include <stdbool.h>
++#include <stdint.h>
++
++typedef enum McpxDspMemorySpace {
++    MCPX_DSP_SPACE_X = DSP56300_MEM_SPACE_X,
++    MCPX_DSP_SPACE_Y = DSP56300_MEM_SPACE_Y,
++    MCPX_DSP_SPACE_P = DSP56300_MEM_SPACE_P
++} McpxDspMemorySpace;
++
++#define MCPX_DSP_MAX_MEMORY_REGIONS 4u
++
++typedef struct McpxDspEngine {
++    Dsp56300Jit *jit;
++    Dsp56300MemoryRegion x_regions[MCPX_DSP_MAX_MEMORY_REGIONS];
++    Dsp56300MemoryRegion y_regions[MCPX_DSP_MAX_MEMORY_REGIONS];
++    Dsp56300MemoryRegion p_regions[MCPX_DSP_MAX_MEMORY_REGIONS];
++    Dsp56300MemoryMap memory_map;
++    Dsp56300CreateInfo create_info;
++} McpxDspEngine;
++
++bool mcpx_dsp_engine_init_with_map(McpxDspEngine *engine,
++                                   const Dsp56300MemoryMap *memory_map);
++bool mcpx_dsp_engine_init(McpxDspEngine *engine,
++                          uint32_t *xram, uint32_t x_words,
++                          uint32_t *yram, uint32_t y_words,
++                          uint32_t *pram, uint32_t p_words);
++bool mcpx_dsp_engine_init_with_peripherals(
++    McpxDspEngine *engine,
++    uint32_t *xram, uint32_t x_words,
++    uint32_t *yram, uint32_t y_words,
++    uint32_t *pram, uint32_t p_words,
++    uint32_t peripheral_start, uint32_t peripheral_end,
++    const Dsp56300CallbackRegion *x_peripheral,
++    const Dsp56300CallbackRegion *y_peripheral);
++void mcpx_dsp_engine_destroy(McpxDspEngine *engine);
++void mcpx_dsp_engine_reset(McpxDspEngine *engine);
++void mcpx_dsp_engine_step(McpxDspEngine *engine);
++void mcpx_dsp_engine_run(McpxDspEngine *engine, int32_t cycles);
++void mcpx_dsp_engine_invalidate_cache(McpxDspEngine *engine);
++bool mcpx_dsp_engine_get_pc(const McpxDspEngine *engine, uint32_t *pc);
++bool mcpx_dsp_engine_read(const McpxDspEngine *engine,
++                          McpxDspMemorySpace space, uint32_t address,
++                          uint32_t *value);
++bool mcpx_dsp_engine_write(McpxDspEngine *engine,
++                           McpxDspMemorySpace space, uint32_t address,
++                           uint32_t value);
+diff --git a/src/apu/apu_dsp_trace.h b/src/apu/apu_dsp_trace.h
+new file mode 100644
+index 0000000..bf5b7c2
+--- /dev/null
++++ b/src/apu/apu_dsp_trace.h
+@@ -0,0 +1,34 @@
++#pragma once
++
++#include <stdint.h>
++
++#define MCPX_DSP_TRACE_SEN              (1u << 0)
++#define MCPX_DSP_TRACE_STACK_OVERFLOW   (1u << 1)
++#define MCPX_DSP_TRACE_STACK_UNDERFLOW  (1u << 2)
++#define MCPX_DSP_TRACE_STACK_IRQ        (1u << 3)
++#define MCPX_DSP_TRACE_STACK_MASK       (MCPX_DSP_TRACE_STACK_OVERFLOW | \
++                                         MCPX_DSP_TRACE_STACK_UNDERFLOW | \
++                                         MCPX_DSP_TRACE_STACK_IRQ)
++#define MCPX_DSP_TRACE_SAMPLE_PERIOD    60u
++#define MCPX_DSP_TRACE_AUDIO_PERIOD     188u
++
++static inline int mcpx_dsp_trace_sample_due(uint64_t frame)
++{
++    return frame == 1 || (frame % MCPX_DSP_TRACE_SAMPLE_PERIOD) == 0;
++}
++
++static inline int mcpx_dsp_trace_audio_sample_due(uint64_t block)
++{
++    return block == 1 || (block % MCPX_DSP_TRACE_AUDIO_PERIOD) == 0;
++}
++
++static inline uint32_t mcpx_dsp_trace_events(uint32_t omr, uint32_t sp,
++                                              uint64_t pending_bits)
++{
++    uint32_t events = 0;
++    if (omr & (1u << 20)) events |= MCPX_DSP_TRACE_SEN;
++    if (sp & (1u << 4)) events |= MCPX_DSP_TRACE_STACK_OVERFLOW;
++    if (sp & (1u << 5)) events |= MCPX_DSP_TRACE_STACK_UNDERFLOW;
++    if (pending_bits & (1ull << 1)) events |= MCPX_DSP_TRACE_STACK_IRQ;
++    return events;
++}
 diff --git a/src/apu/apu_mmio_hook.c b/src/apu/apu_mmio_hook.c
 index 2742fa2..8756189 100644
 --- a/src/apu/apu_mmio_hook.c
@@ -763,10 +2650,66 @@ index dd6bec1..5718709 100644
  
  /* Stub address space - just passed to ldl_le_phys etc. (ignored) */
 diff --git a/src/apu/apu_state.h b/src/apu/apu_state.h
-index 651b334..6224beb 100644
+index 651b334..f09f135 100644
 --- a/src/apu/apu_state.h
 +++ b/src/apu/apu_state.h
-@@ -373,6 +373,14 @@ typedef struct MCPXAPUVoiceFilter {
+@@ -24,6 +24,8 @@
+ #include "apu_shim.h"
+ #include "apu_regs.h"
+ #include "apu_debug.h"
++#include "apu_dsp_engine.h"
++#include "apu_dma.h"
+ 
+ /* ============================================================
+  * DSP CPU registers
+@@ -105,36 +107,25 @@ typedef struct dsp_core_s {
+  * DSP DMA State (from dsp_dma.h)
+  * ============================================================ */
+ 
+-typedef void (*dsp_scratch_rw_func)(
+-    void *opaque, uint8_t *ptr, uint32_t addr, size_t len, bool dir);
+-typedef void (*dsp_fifo_rw_func)(
+-    void *opaque, uint8_t *ptr, unsigned int index, size_t len, bool dir);
+-
+-typedef struct DSPDMAState {
+-    dsp_core_t *core;
+-
+-    void *rw_opaque;
+-    dsp_scratch_rw_func scratch_rw;
+-    dsp_fifo_rw_func fifo_rw;
+-
+-    uint32_t configuration;
+-    uint32_t control;
+-    uint32_t start_block;
+-    uint32_t next_block;
+-
+-    bool error;
+-    bool eol;
+-} DSPDMAState;
+-
+ /* ============================================================
+  * DSP State (from dsp_state.h)
+  * ============================================================ */
+ 
+ typedef struct DSPState {
++    struct MCPXAPUState *apu;
+     dsp_core_t core;
+     DSPDMAState dma;
++    McpxDspEngine engine;
+     int save_cycles;
+     uint32_t interrupts;
++    uint32_t frame_starts_pending;
++    uint32_t timer_ctl, timer_period;
++    uint64_t timer_base, cycles_base;
++    bool engine_ready;
++    bool halted_since_reset;
++    bool dma_fallback_logged;
++    uint64_t trace_frame_count;
++    uint32_t trace_events_logged;
+     bool is_gp;
+ } DSPState;
+ 
+@@ -373,6 +364,14 @@ typedef struct MCPXAPUVoiceFilter {
      uint16_t voice;
      float resample_buf[NUM_SAMPLES_PER_FRAME * 2];
      SRC_STATE *resampler;
@@ -781,21 +2724,43 @@ index 651b334..6224beb 100644
      sv_filter svf[2];
      HrtfFilter hrtf;
  } MCPXAPUVoiceFilter;
-@@ -467,6 +475,10 @@ struct MCPXAPUState {
+@@ -467,6 +466,13 @@ struct MCPXAPUState {
  
      MemoryRegion *ram;
      uint8_t *ram_ptr;
 +    size_t ram_size; /* Actual readable physical backing; not the VA aperture. */
 +    bool trace_mmio; /* Immutable per-instance presence of RECOMP_APU_TRACE. */
 +    bool trace_dsp_boot; /* Opt-in, initialized before the frame thread starts. */
++    bool trace_dsp_state; /* Opt-in frame-boundary DSP state samples. */
 +    unsigned int dsp_boot_trace_events[2]; /* Protected by the device mutex. */
++    uint64_t dsp_trace_audio_blocks, dsp_trace_ep_fifo_writes;
++    uint64_t dsp_trace_ep_fifo_captured;
      MemoryRegion mmio;
  
      MCPXAPUVPState vp;
-@@ -518,6 +530,14 @@ void mcpx_apu_dsp_init(MCPXAPUState *d);
+@@ -498,6 +504,7 @@ struct MCPXAPUState {
+     struct {
+         McpxApuDebugMonitorPoint point;
+         int16_t frame_buf[256][2];
++        bool ep_fifo_frame_valid; /* Native PCM owns this epoch until consumed. */
+         void *stream; /* SDL_AudioStream* - stubbed */
+         int queued_bytes_low, queued_bytes_high;
+     } monitor;
+@@ -513,11 +520,24 @@ void mcpx_apu_vp_finalize(MCPXAPUState *d);
+ void mcpx_apu_vp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME]);
+ void mcpx_apu_vp_reset(MCPXAPUState *d);
+ 
+-/* DSP functions (stubbed) */
++/* DSP functions */
+ void mcpx_apu_dsp_init(MCPXAPUState *d);
++void mcpx_apu_dsp_finalize(MCPXAPUState *d);
++void mcpx_apu_dsp_reset(MCPXAPUState *d);
  void mcpx_apu_update_dsp_preference(MCPXAPUState *d);
  void mcpx_apu_dsp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME]);
  
++/* Output consumes one completed eight-tick EP epoch. */
++void mcpx_apu_monitor_frame(MCPXAPUState *d);
++
 +/* Aligned 32-bit GP/EP program-memory and reset-register MMIO. Unknown
 + * offsets retain the existing zero/ignored fallback. These acquire d->lock;
 + * the public MMIO dispatcher calls them without holding that lock. */
@@ -1326,10 +3291,10 @@ index caef326..161c0eb 100644
  target_include_directories(xbox_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 diff --git a/src/input/pc_input.c b/src/input/pc_input.c
 new file mode 100644
-index 0000000..871ef7e
+index 0000000..84ac6f906d53e06b48cdb4ffefde40f8bb247fa3
 --- /dev/null
 +++ b/src/input/pc_input.c
-@@ -0,0 +1,1319 @@
+@@ -0,0 +1,1321 @@
 +/*
 + * pc_input.c -- native keyboard and mouse for BLACK. See pc_input.h for the design.
 + *
@@ -2360,7 +4325,9 @@ index 0000000..871ef7e
 +        s_trace_last_bits = bits;
 +        trace("keyboard/mouse controls now 0x%06X (gameplay %d)", bits, gameplay);
 +    }
-+    if (!bits) return;
++    if (!bits) {
++        return;
++    }
 +
 +    out[2] |= (uint8_t)((bits & 0x0F) | ((bits >> 12) & 0x0F) << 4);
 +    for (c = CTL_A; c <= CTL_RT; c++)
@@ -2651,7 +4618,7 @@ index 0000000..871ef7e
 +void pc_input_test_set_layout_labels(int layout_aware) { s_layout_labels = layout_aware; }
 diff --git a/src/input/pc_input.h b/src/input/pc_input.h
 new file mode 100644
-index 0000000..70ead0c
+index 0000000..70ead0cbcedc8083c044c62260f8f1ae9a621025
 --- /dev/null
 +++ b/src/input/pc_input.h
 @@ -0,0 +1,206 @@
@@ -11081,10 +13048,10 @@ index 0000000..345e83c
 +}
 diff --git a/src/nv2a/kelvin/kelvin_gpu_post.inc b/src/nv2a/kelvin/kelvin_gpu_post.inc
 new file mode 100644
-index 0000000..54ecd44
+index 0000000..fb96a88
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu_post.inc
-@@ -0,0 +1,765 @@
+@@ -0,0 +1,771 @@
 +/* Picture effects of the GPU renderer, included by kelvin_gpu.c after the surface and pass helpers.
 + *
 + * What the player chooses in the Video Settings page (pc_video.c) that the renderer does itself:
@@ -11782,6 +13749,7 @@ index 0000000..54ecd44
 +static void kg_post_poll(void)
 +{
 +    const unsigned int gen = pc_video_generation();
++    unsigned int i;
 +    PcVideoSettings v;
 +    if (s_post.cfg && gen == s_post.gen) return;
 +    pc_video_get(&v);
@@ -11799,6 +13767,11 @@ index 0000000..54ecd44
 +        s_post.ao_scene_frame = e && *e ? strtoull(e, NULL, 0) : 120;
 +        e = getenv("RECOMP_KGPU_POST_TRACE");
 +        s_post.post_trace = e && *e && atoi(e) != 0;
++    }
++    if (s_post.cfg && !s_post.dof && v.dof && s_post.focus_rtv[0] && s_post.focus_rtv[1]) {
++        const FLOAT unset[4] = { -1.0f, -1.0f, -1.0f, -1.0f };
++        for (i = 0; i < 2; i++) ID3D11DeviceContext_ClearRenderTargetView(G.ctx, s_post.focus_rtv[i], unset);
++        s_post.focus_cur = 0;
 +    }
 +    s_post.cfg = true;
 +    s_post.aa = (int)v.aa; s_post.dof = (int)v.dof; s_post.sharpen = (int)v.sharpen;
@@ -19628,10 +21601,10 @@ index 0000000..8607782
 +#endif
 diff --git a/src/nv2a/kelvin/kelvin_render.c b/src/nv2a/kelvin/kelvin_render.c
 new file mode 100644
-index 0000000..1786421
+index 0000000..3c3129b
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_render.c
-@@ -0,0 +1,5314 @@
+@@ -0,0 +1,5319 @@
 +/*
 + * Kelvin renderer: surfaces, clears, blits, fences and the draw path --
 + * vertex fetch, primitive assembly, clipping and rasterization.
@@ -19656,6 +21629,7 @@ index 0000000..1786421
 +#include <stdlib.h>
 +#include <limits.h>
 +#include "kelvin_render.h"
++#include "kelvin_trace.h"
 +#include "kelvin_workers.h"
 +#include "kelvin_gpu.h"
 +#include <intrin.h>
@@ -22986,6 +24960,7 @@ index 0000000..1786421
 +             * supplies, as fetched. */
 +            float in[NV2A_VERTEXSHADER_ATTRIBUTES][4];
 +            fetch_vertex(pg, src, idx[i], in);
++            kelvin_trace_record_begin(stderr);
 +            fprintf(stderr, "[KTRACE]      in");
 +            for (k = 0; k < NV2A_VERTEXSHADER_ATTRIBUTES; k++) {
 +                if (pg->vertex_attributes[k].count ||
@@ -22996,9 +24971,11 @@ index 0000000..1786421
 +                }
 +            }
 +            fprintf(stderr, "\n");
++            kelvin_trace_record_end(stderr);
 +        }
 +    }
 +    if (src->kind == SRC_INLINE_ARRAY) {
++        kelvin_trace_record_begin(stderr);
 +        fprintf(stderr, "[KTRACE]   inline array: vertex %u bytes, %u words;",
 +                src->vertex_size, pg->inline_array_length);
 +        for (k = 0; k < NV2A_VERTEXSHADER_ATTRIBUTES; k++) {
@@ -23009,6 +24986,7 @@ index 0000000..1786421
 +            }
 +        }
 +        fprintf(stderr, "\n");
++        kelvin_trace_record_end(stderr);
 +    }
 +    fflush(stderr);
 +}
@@ -27192,12 +29170,44 @@ index 0000000..8fc19b1
 +    _mm_storeu_ps(out, sample_2d(t, face, 0.5f * (sc / ma + 1.0f),
 +                                 0.5f * (tc / ma + 1.0f), lod));
 +}
+diff --git a/src/nv2a/kelvin/kelvin_trace.h b/src/nv2a/kelvin/kelvin_trace.h
+new file mode 100644
+index 0000000..f4db705
+--- /dev/null
++++ b/src/nv2a/kelvin/kelvin_trace.h
+@@ -0,0 +1,26 @@
++/* Keep a diagnostic record's multiple stdio writes together.
++ * Released under LGPL-2.1-or-later, as part of the Kelvin renderer. */
++#ifndef XBOX_NV2A_KELVIN_TRACE_H
++#define XBOX_NV2A_KELVIN_TRACE_H
++
++#include <stdio.h>
++
++static inline void kelvin_trace_record_begin(FILE *stream)
++{
++#ifdef _MSC_VER
++    _lock_file(stream);
++#else
++    flockfile(stream);
++#endif
++}
++
++static inline void kelvin_trace_record_end(FILE *stream)
++{
++#ifdef _MSC_VER
++    _unlock_file(stream);
++#else
++    funlockfile(stream);
++#endif
++}
++
++#endif
 diff --git a/src/nv2a/kelvin/kelvin_vsh.c b/src/nv2a/kelvin/kelvin_vsh.c
 new file mode 100644
-index 0000000..a5c2480
+index 0000000..2d3a097
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_vsh.c
-@@ -0,0 +1,936 @@
+@@ -0,0 +1,939 @@
 +/*
 + * Kelvin vertex stage.
 + *
@@ -27221,6 +29231,7 @@ index 0000000..a5c2480
 +
 +#include <float.h>
 +#include "kelvin_render.h"
++#include "kelvin_trace.h"
 +#include "nv2a_vsh_cpu/nv2a_vsh_emulator.h"
 +#include "nv2a_vsh_cpu/nv2a_vsh_emulator4.h"
 +#include "nv2a_vsh_cpu/nv2a_vsh_emulator8.h"
@@ -27888,6 +29899,7 @@ index 0000000..a5c2480
 +    for (n = 0, st = s_vs.entry->prog.steps; n < NV2A_MAX_TRANSFORM_PROGRAM_LENGTH;
 +         n++, st++) {
 +        const Nv2aVshOperation *pair[2] = { &st->mac, &st->ilu };
++        kelvin_trace_record_begin(stderr);
 +        fprintf(stderr, "[KTRACE]     %3d:", n);
 +        for (k = 0; k < 2; k++) {
 +            const Nv2aVshOperation *op = pair[k];
@@ -27922,6 +29934,7 @@ index 0000000..a5c2480
 +            }
 +        }
 +        fputc('\n', stderr);
++        kelvin_trace_record_end(stderr);
 +        if (st->is_final) {
 +            break;
 +        }
@@ -39056,6 +41069,764 @@ index dc1dae0..d50ce23 100644
      (sp) += 4; \
  } while(0)
  
+diff --git a/tests/apu_dsp_core/CMakeLists.txt b/tests/apu_dsp_core/CMakeLists.txt
+new file mode 100644
+index 0000000..345d047
+--- /dev/null
++++ b/tests/apu_dsp_core/CMakeLists.txt
+@@ -0,0 +1,12 @@
++cmake_minimum_required(VERSION 3.20)
++project(apu_dsp_core_test C)
++set(CMAKE_C_STANDARD 11)
++add_subdirectory(../.. runtime)
++add_executable(apu_dsp_core_test test_main.c test_dma.c)
++target_include_directories(apu_dsp_core_test PRIVATE
++    ../../src/apu
++    ../../src
++)
++target_link_libraries(apu_dsp_core_test PRIVATE xbox_apu)
++enable_testing()
++add_test(NAME apu_dsp_core COMMAND apu_dsp_core_test)
+diff --git a/tests/apu_dsp_core/test_dma.c b/tests/apu_dsp_core/test_dma.c
+new file mode 100644
+index 0000000..e96889b
+--- /dev/null
++++ b/tests/apu_dsp_core/test_dma.c
+@@ -0,0 +1,224 @@
++#include "apu_dma.h"
++#include "apu_dma_regs.h"
++
++#include <string.h>
++
++enum { TEST_WORDS = 0x1800, TEST_BYTES = 256 };
++
++typedef struct TestDmaMemory {
++    uint32_t words[TEST_WORDS];
++    uint8_t bytes[TEST_BYTES];
++} TestDmaMemory;
++
++static uint32_t read_word(void *opaque, int space, uint32_t address)
++{
++    TestDmaMemory *memory = opaque;
++    (void)space;
++    return address < TEST_WORDS ? memory->words[address] : 0;
++}
++
++static void write_word(void *opaque, int space, uint32_t address,
++                       uint32_t value)
++{
++    TestDmaMemory *memory = opaque;
++    (void)space;
++    if (address < TEST_WORDS) memory->words[address] = value;
++}
++
++static void read_words(void *opaque, int space, uint32_t address,
++                       uint32_t *out, uint32_t count)
++{
++    for (uint32_t i = 0; i < count; ++i)
++        out[i] = read_word(opaque, space, address + i);
++}
++
++static void write_words(void *opaque, int space, uint32_t address,
++                        const uint32_t *values, uint32_t count)
++{
++    for (uint32_t i = 0; i < count; ++i)
++        write_word(opaque, space, address + i, values[i]);
++}
++
++static bool scratch(void *opaque, uint8_t *bytes, uint32_t addr, size_t len,
++                    bool dir)
++{
++    TestDmaMemory *memory = opaque;
++    if (addr > TEST_BYTES || len > TEST_BYTES - addr) return false;
++    if (dir) memcpy(memory->bytes + addr, bytes, len);
++    else memcpy(bytes, memory->bytes + addr, len);
++    return true;
++}
++
++static bool fifo(void *opaque, uint8_t *bytes, unsigned int index,
++                 size_t len, bool dir)
++{
++    TestDmaMemory *memory = opaque;
++    if (index != 0 || len > TEST_BYTES) return false;
++    if (dir) memcpy(memory->bytes, bytes, len);
++    else memcpy(bytes, memory->bytes, len);
++    return true;
++}
++
++int test_dsp_dma_transfer(void)
++{
++    TestDmaMemory memory = {0};
++    DSPDMAState dma = {0};
++    dma.mem_opaque = &memory;
++    dma.mem_read = read_word;
++    dma.mem_write = write_word;
++    dma.mem_read_run = read_words;
++    dma.mem_write_run = write_words;
++    dma.rw_opaque = &memory;
++    dma.scratch_rw = scratch;
++    dma.fifo_rw = fifo;
++    /* One linear DSP-to-FIFO node, then EOL. Format 2 packs one 24-bit
++     * DSP word into a 32-bit slot. */
++    memory.words[0] = NODE_POINTER_EOL;
++    memory.words[1] = (1u << 1) | (1u << 14) | (2u << 10);
++    memory.words[2] = 2;
++    memory.words[3] = 0x10;
++    memory.words[4] = 0;
++    memory.words[5] = 0;
++    memory.words[6] = 0xFF;
++    memory.words[0x10] = 0x123456;
++    memory.words[0x11] = 0xABCDEF;
++
++    dsp_dma_write(&dma, DMA_NEXT_BLOCK, 0);
++    dsp_dma_write(&dma, DMA_CONTROL, DMA_CONTROL_ACTION_START);
++    if (!dma.eol || dma.error || memory.bytes[1] != 0x56 ||
++        memory.bytes[2] != 0x34 || memory.bytes[3] != 0x12 ||
++        memory.bytes[5] != 0xEF || memory.bytes[6] != 0xCD ||
++        memory.bytes[7] != 0xAB) {
++        dsp_dma_destroy(&dma);
++        return 1;
++    }
++    dsp_dma_completion_seen(&dma);
++    if (dma.control & DMA_CONTROL_RUNNING) {
++        dsp_dma_destroy(&dma);
++        return 2;
++    }
++
++    /* Completed transfers retain two RUNNING polls for the startup
++     * handshake, then report completion. Freezing holds that completion
++     * until UNFREEZE regardless of how often the guest polls. */
++    dsp_dma_reset(&dma);
++    dsp_dma_write(&dma, DMA_NEXT_BLOCK, 0);
++    dsp_dma_write(&dma, DMA_CONTROL, DMA_CONTROL_ACTION_START);
++    dsp_dma_write(&dma, DMA_CONTROL, DMA_CONTROL_ACTION_FREEZE);
++    for (unsigned i = 0; i < 5; ++i) {
++        uint32_t control = dsp_dma_read(&dma, DMA_CONTROL);
++        if ((control & (DMA_CONTROL_RUNNING | DMA_CONTROL_FROZEN)) !=
++            (DMA_CONTROL_RUNNING | DMA_CONTROL_FROZEN) || dma.eol ||
++            !dma.eol_held) {
++            dsp_dma_destroy(&dma);
++            return 6;
++        }
++    }
++    dsp_dma_write(&dma, DMA_CONTROL, DMA_CONTROL_ACTION_UNFREEZE);
++    if (!dma.eol || dma.eol_held ||
++        !(dsp_dma_read(&dma, DMA_CONTROL) & DMA_CONTROL_RUNNING) ||
++        !(dsp_dma_read(&dma, DMA_CONTROL) & DMA_CONTROL_RUNNING) ||
++        (dsp_dma_read(&dma, DMA_CONTROL) & DMA_CONTROL_RUNNING)) {
++        dsp_dma_destroy(&dma);
++        return 7;
++    }
++
++    /* EOL is a sticky interrupt latch. Starting a later cyclic chain must
++     * not let that earlier latch retire the new transfer through polling
++     * or through acknowledgement of the previous completion interrupt. */
++    memory.words[0] = 0;
++    memory.words[1] = (1u << 1) | (4u << 10);
++    memory.words[2] = 0;
++    dsp_dma_write(&dma, DMA_NEXT_BLOCK, 0);
++    dsp_dma_write(&dma, DMA_CONTROL, DMA_CONTROL_ACTION_START);
++    if (!dma.eol) {
++        dsp_dma_destroy(&dma);
++        return 10;
++    }
++    for (unsigned i = 0; i < 5; ++i) {
++        if (!(dsp_dma_read(&dma, DMA_CONTROL) & DMA_CONTROL_RUNNING)) {
++            dsp_dma_destroy(&dma);
++            return 11;
++        }
++    }
++    dsp_dma_write(&dma, DMA_CONTROL, DMA_CONTROL_ACTION_FREEZE);
++    dsp_dma_completion_seen(&dma);
++    if (!(dsp_dma_read(&dma, DMA_CONTROL) & DMA_CONTROL_RUNNING)) {
++        dsp_dma_destroy(&dma);
++        return 12;
++    }
++    dsp_dma_write(&dma, DMA_CONTROL, DMA_CONTROL_ACTION_UNFREEZE);
++    dsp_dma_completion_seen(&dma);
++    if (!(dsp_dma_read(&dma, DMA_CONTROL) & DMA_CONTROL_RUNNING)) {
++        dsp_dma_destroy(&dma);
++        return 13;
++    }
++
++    /* An empty chain is already at its terminator and also completes. */
++    dsp_dma_reset(&dma);
++    dsp_dma_write(&dma, DMA_NEXT_BLOCK, NODE_POINTER_EOL);
++    dsp_dma_write(&dma, DMA_CONTROL, DMA_CONTROL_ACTION_START);
++    if (!(dsp_dma_read(&dma, DMA_CONTROL) & DMA_CONTROL_RUNNING) ||
++        !(dsp_dma_read(&dma, DMA_CONTROL) & DMA_CONTROL_RUNNING) ||
++        (dsp_dma_read(&dma, DMA_CONTROL) & DMA_CONTROL_RUNNING)) {
++        dsp_dma_destroy(&dma);
++        return 14;
++    }
++
++    /* An unsupported format is rejected, reported, and does not transfer. */
++    dsp_dma_reset(&dma);
++    memset(memory.bytes, 0, sizeof(memory.bytes));
++    memory.words[0] = NODE_POINTER_EOL;
++    memory.words[1] = (1u << 1) | (4u << 10);
++    memory.words[2] = 4;
++    memory.words[3] = 0x20;
++    dsp_dma_write(&dma, DMA_NEXT_BLOCK, 0);
++    dsp_dma_write(&dma, DMA_CONTROL, DMA_CONTROL_ACTION_START);
++    if (!dma.error || !(dma.pending_interrupts & DMA_INTERRUPT_ERROR) ||
++        memory.bytes[0] != 0) {
++        dsp_dma_destroy(&dma);
++        return 3;
++    }
++
++    /* Failed guest reads must not unpack stale staging bytes into DSP RAM. */
++    dsp_dma_reset(&dma);
++    memory.words[0] = NODE_POINTER_EOL;
++    memory.words[1] = (0u << 1) | (1u << 14) | (2u << 10);
++    memory.words[2] = 100;
++    memory.words[3] = 0x20;
++    memory.words[0x20] = 0x654321;
++    dsp_dma_write(&dma, DMA_NEXT_BLOCK, 0);
++    dsp_dma_write(&dma, DMA_CONTROL, DMA_CONTROL_ACTION_START);
++    if (!dma.error || !(dma.pending_interrupts & DMA_INTERRUPT_ERROR) ||
++        memory.words[0x20] != 0x654321) {
++        dsp_dma_destroy(&dma);
++        return 4;
++    }
++
++    /* A cyclic descriptor chain must remain bounded for this synchronous
++     * backend, with RUNNING left visible as in the original model. */
++    dsp_dma_reset(&dma);
++    memory.words[0] = 0;
++    memory.words[1] = (1u << 1) | (4u << 10);
++    memory.words[2] = 0;
++    memory.words[3] = 0;
++    dsp_dma_write(&dma, DMA_NEXT_BLOCK, 0);
++    dsp_dma_write(&dma, DMA_CONTROL, DMA_CONTROL_ACTION_START);
++    if (!(dma.control & DMA_CONTROL_RUNNING) || !dma.error) {
++        dsp_dma_destroy(&dma);
++        return 5;
++    }
++    for (unsigned i = 0; i < 5; ++i) {
++        if (!(dsp_dma_read(&dma, DMA_CONTROL) & DMA_CONTROL_RUNNING)) {
++            dsp_dma_destroy(&dma);
++            return 8;
++        }
++    }
++    dsp_dma_write(&dma, DMA_CONTROL, DMA_CONTROL_ACTION_STOP);
++    if (dsp_dma_read(&dma, DMA_CONTROL) & DMA_CONTROL_RUNNING) {
++        dsp_dma_destroy(&dma);
++        return 9;
++    }
++    dsp_dma_destroy(&dma);
++    return 0;
++}
+diff --git a/tests/apu_dsp_core/test_main.c b/tests/apu_dsp_core/test_main.c
+new file mode 100644
+index 0000000..bd8e079
+--- /dev/null
++++ b/tests/apu_dsp_core/test_main.c
+@@ -0,0 +1,488 @@
++#include "apu_dsp_engine.h"
++#include "apu_state.h"
++#include "apu_dma_regs.h"
++#include "apu_dsp_trace.h"
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#define DSP56300_TEST_RAM_WORDS 4096u
++
++static int check_dsp_trace_event_flags(void)
++{
++    if (!mcpx_dsp_trace_sample_due(1) ||
++        !mcpx_dsp_trace_sample_due(60) ||
++        !mcpx_dsp_trace_sample_due(120) ||
++        mcpx_dsp_trace_sample_due(2) ||
++        mcpx_dsp_trace_sample_due(59) ||
++        mcpx_dsp_trace_sample_due(61)) return 8;
++    if (!mcpx_dsp_trace_audio_sample_due(1) ||
++        !mcpx_dsp_trace_audio_sample_due(188) ||
++        mcpx_dsp_trace_audio_sample_due(2) ||
++        mcpx_dsp_trace_audio_sample_due(187)) return 9;
++    if (mcpx_dsp_trace_events(0, 0, 0) != 0) return 1;
++    if (mcpx_dsp_trace_events(1u << 20, 0, 0) != MCPX_DSP_TRACE_SEN) return 2;
++    if (mcpx_dsp_trace_events(0, 1u << 4, 0) != MCPX_DSP_TRACE_STACK_OVERFLOW) return 3;
++    if (mcpx_dsp_trace_events(0, 1u << 5, 0) != MCPX_DSP_TRACE_STACK_UNDERFLOW) return 4;
++    if (mcpx_dsp_trace_events(0, 0, 1u << 1) != MCPX_DSP_TRACE_STACK_IRQ) return 5;
++    if (mcpx_dsp_trace_events((1u << 20), (1u << 4) | (1u << 5), 1u << 1) !=
++        (MCPX_DSP_TRACE_SEN | MCPX_DSP_TRACE_STACK_OVERFLOW |
++         MCPX_DSP_TRACE_STACK_UNDERFLOW | MCPX_DSP_TRACE_STACK_IRQ)) return 6;
++    if (mcpx_dsp_trace_events(0, 0, 1u << 2) != 0) return 7;
++    return 0;
++}
++
++int test_dsp_dma_transfer(void);
++
++void xbox_SetAckTick(void (*fn)(void))
++{
++    (void)fn;
++}
++
++typedef struct TestPeripheral {
++    uint32_t address;
++    uint32_t value;
++    unsigned reads;
++    unsigned writes;
++} TestPeripheral;
++
++static uint32_t peripheral_read(void *opaque, uint32_t address)
++{
++    TestPeripheral *peripheral = (TestPeripheral *)opaque;
++    peripheral->address = address;
++    peripheral->reads++;
++    return peripheral->value;
++}
++
++static void peripheral_write(void *opaque, uint32_t address, uint32_t value)
++{
++    TestPeripheral *peripheral = (TestPeripheral *)opaque;
++    peripheral->address = address;
++    peripheral->value = value;
++    peripheral->writes++;
++}
++
++static int check_pc_and_p_write_invalidation(void)
++{
++    uint32_t x[DSP56300_TEST_RAM_WORDS] = {0};
++    uint32_t y[DSP56300_TEST_RAM_WORDS] = {0};
++    uint32_t p[DSP56300_TEST_RAM_WORDS] = {0};
++    McpxDspEngine dsp;
++    uint32_t pc = 0;
++
++    p[0] = 0x0C0100; /* JMP $100 */
++    if (!mcpx_dsp_engine_init(&dsp, x, DSP56300_TEST_RAM_WORDS,
++                              y, DSP56300_TEST_RAM_WORDS,
++                              p, DSP56300_TEST_RAM_WORDS))
++        return 1;
++    mcpx_dsp_engine_step(&dsp);
++    if (!mcpx_dsp_engine_get_pc(&dsp, &pc) || pc != 0x100) {
++        mcpx_dsp_engine_destroy(&dsp);
++        return 2;
++    }
++
++    /* Replacing translated program memory must invalidate the JIT block. */
++    mcpx_dsp_engine_write(&dsp, MCPX_DSP_SPACE_P, 0, 0x0C0200);
++    mcpx_dsp_engine_reset(&dsp);
++    mcpx_dsp_engine_step(&dsp);
++    if (!mcpx_dsp_engine_get_pc(&dsp, &pc) || pc != 0x200) {
++        mcpx_dsp_engine_destroy(&dsp);
++        return 3;
++    }
++    mcpx_dsp_engine_destroy(&dsp);
++    return 0;
++}
++
++static int check_memory_spaces_and_instances_are_independent(void)
++{
++    uint32_t x0[DSP56300_TEST_RAM_WORDS] = {0};
++    uint32_t y0[DSP56300_TEST_RAM_WORDS] = {0};
++    uint32_t p0[DSP56300_TEST_RAM_WORDS] = {0};
++    uint32_t x1[DSP56300_TEST_RAM_WORDS] = {0};
++    uint32_t y1[DSP56300_TEST_RAM_WORDS] = {0};
++    uint32_t p1[DSP56300_TEST_RAM_WORDS] = {0};
++    McpxDspEngine a, b;
++    uint32_t value = 0;
++    if (!mcpx_dsp_engine_init(&a, x0, DSP56300_TEST_RAM_WORDS,
++                              y0, DSP56300_TEST_RAM_WORDS,
++                              p0, DSP56300_TEST_RAM_WORDS) ||
++        !mcpx_dsp_engine_init(&b, x1, DSP56300_TEST_RAM_WORDS,
++                              y1, DSP56300_TEST_RAM_WORDS,
++                              p1, DSP56300_TEST_RAM_WORDS))
++        return 1;
++
++    mcpx_dsp_engine_write(&a, MCPX_DSP_SPACE_X, 12, 0x123456);
++    mcpx_dsp_engine_write(&a, MCPX_DSP_SPACE_Y, 12, 0x654321);
++    if (!mcpx_dsp_engine_read(&a, MCPX_DSP_SPACE_X, 12, &value) ||
++        value != 0x123456 ||
++        !mcpx_dsp_engine_read(&a, MCPX_DSP_SPACE_Y, 12, &value) ||
++        value != 0x654321 ||
++        !mcpx_dsp_engine_read(&b, MCPX_DSP_SPACE_X, 12, &value) || value != 0) {
++        mcpx_dsp_engine_destroy(&b);
++        mcpx_dsp_engine_destroy(&a);
++        return 2;
++    }
++    mcpx_dsp_engine_destroy(&b);
++    mcpx_dsp_engine_destroy(&a);
++    return 0;
++}
++
++static int check_peripheral_callbacks(void)
++{
++    uint32_t x[DSP56300_TEST_RAM_WORDS] = {0};
++    uint32_t y[DSP56300_TEST_RAM_WORDS] = {0};
++    uint32_t p[DSP56300_TEST_RAM_WORDS] = {0};
++    TestPeripheral peripheral = {0};
++    Dsp56300CallbackRegion callback = {
++        .opaque = &peripheral,
++        .read = peripheral_read,
++        .write = peripheral_write
++    };
++    McpxDspEngine dsp;
++    uint32_t value = 0;
++
++    if (!mcpx_dsp_engine_init_with_peripherals(
++            &dsp, x, DSP56300_TEST_RAM_WORDS,
++            y, DSP56300_TEST_RAM_WORDS,
++            p, DSP56300_TEST_RAM_WORDS,
++            0xFFFF80, 0x1000000, &callback, &callback))
++        return 1;
++    peripheral.value = 0x00ABCDEF;
++    if (!mcpx_dsp_engine_read(&dsp, MCPX_DSP_SPACE_X, 0xFFFFB0, &value) ||
++        value != 0x00ABCDEF || peripheral.address != 0xFFFFB0 ||
++        peripheral.reads != 1) {
++        mcpx_dsp_engine_destroy(&dsp);
++        return 2;
++    }
++    if (!mcpx_dsp_engine_write(&dsp, MCPX_DSP_SPACE_Y, 0xFFFFC4, 0x123456) ||
++        peripheral.address != 0xFFFFC4 || peripheral.value != 0x123456 ||
++        peripheral.writes != 1) {
++        mcpx_dsp_engine_destroy(&dsp);
++        return 3;
++    }
++    mcpx_dsp_engine_destroy(&dsp);
++    return 0;
++}
++
++static int check_mixbuffer_alias(void)
++{
++    uint32_t x[DSP56300_TEST_RAM_WORDS] = {0};
++    uint32_t y[DSP56300_TEST_RAM_WORDS] = {0};
++    uint32_t p[DSP56300_TEST_RAM_WORDS] = {0};
++    Dsp56300MemoryRegion x_regions[2] = {
++        {
++            .start = 0, .end = DSP56300_TEST_RAM_WORDS,
++            .kind = DSP56300_REGION_BUFFER,
++            .data = { .buffer = { .base = x, .offset = 0 } }
++        },
++        {
++            .start = 0x1400, .end = 0x1800,
++            .kind = DSP56300_REGION_BUFFER,
++            .data = { .buffer = { .base = x, .offset = 0xC00 } }
++        }
++    };
++    Dsp56300MemoryRegion y_regions[1] = {{
++        .start = 0, .end = DSP56300_TEST_RAM_WORDS,
++        .kind = DSP56300_REGION_BUFFER,
++        .data = { .buffer = { .base = y, .offset = 0 } }
++    }};
++    Dsp56300MemoryRegion p_regions[1] = {{
++        .start = 0, .end = DSP56300_TEST_RAM_WORDS,
++        .kind = DSP56300_REGION_BUFFER,
++        .data = { .buffer = { .base = p, .offset = 0 } }
++    }};
++    Dsp56300MemoryMap map = {
++        .x_regions = x_regions, .x_count = 2,
++        .y_regions = y_regions, .y_count = 1,
++        .p_regions = p_regions, .p_count = 1
++    };
++    McpxDspEngine dsp;
++    uint32_t value = 0;
++
++    if (!mcpx_dsp_engine_init_with_map(&dsp, &map)) return 1;
++    if (!mcpx_dsp_engine_write(&dsp, MCPX_DSP_SPACE_X, 0x1407, 0xABCD01) ||
++        x[0xC07] != 0xABCD01 ||
++        !mcpx_dsp_engine_read(&dsp, MCPX_DSP_SPACE_X, 0x1407, &value) ||
++        value != 0xABCD01) {
++        mcpx_dsp_engine_destroy(&dsp);
++        return 2;
++    }
++    mcpx_dsp_engine_destroy(&dsp);
++    return 0;
++}
++
++static int check_apu_frame_runs_enabled_core(void)
++{
++    MCPXAPUState *apu = (MCPXAPUState *)calloc(1, sizeof(*apu));
++    float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME] = {{0}};
++    int result = 0;
++    if (!apu) return 1;
++
++    mcpx_apu_dsp_init(apu);
++    if (!apu->gp.dsp || !apu->gp.dsp->engine_ready) {
++        result = 2;
++        goto done;
++    }
++    apu->gp.dsp->core.pram[0] = 0x0C0000; /* JMP $0 */
++    apu->gp.regs[NV_PAPU_GPRST] =
++        NV_PAPU_GPRST_GPRST | NV_PAPU_GPRST_GPDSPRST;
++    mcpx_apu_dsp_frame(apu, mixbins);
++    if (apu->gp.dsp->core.pc != 0 ||
++        apu->gp.dsp->core.cycle_count == 0) {
++        result = 3;
++        goto done;
++    }
++
++    /* A short halted frame must not donate its unused execution budget
++     * to the following busy frame. HALT leaves PC at the JMP $2 loop. */
++    mcpx_dsp_engine_reset(&apu->gp.dsp->engine);
++    apu->gp.dsp->core.pram[0] = 0x08F484; /* MOVEP #1,X:$FFFFC4 */
++    apu->gp.dsp->core.pram[1] = 1;
++    apu->gp.dsp->core.pram[2] = 0x0C0002;
++    mcpx_apu_dsp_frame(apu, mixbins);
++    if (!apu->gp.dsp->core.is_idle ||
++        apu->gp.dsp->core.cycle_count >= 88875u) {
++        result = 4;
++        goto done;
++    }
++    mcpx_apu_dsp_frame(apu, mixbins);
++    if (apu->gp.dsp->core.cycle_count < 88870u ||
++        apu->gp.dsp->core.cycle_count > 88880u) {
++        fprintf(stderr, "Busy GP frame consumed %u cycles\n",
++                apu->gp.dsp->core.cycle_count);
++        result = 5;
++        goto done;
++    }
++
++done:
++    mcpx_apu_dsp_finalize(apu);
++    free(apu);
++    return result;
++}
++
++static int check_apu_dma_sge_bounds(void)
++{
++    MCPXAPUState *apu = (MCPXAPUState *)calloc(1, sizeof(*apu));
++    DSPState *dsp;
++    uint32_t page = 0x2000;
++    int result = 0;
++    if (!apu) return 1;
++    apu->ram_size = 0x4000;
++    apu->ram_ptr = (uint8_t *)calloc(1, apu->ram_size);
++    if (!apu->ram_ptr) { free(apu); return 2; }
++    mcpx_apu_dsp_init(apu);
++    dsp = apu->gp.dsp;
++    if (!dsp || !dsp->engine_ready) { result = 3; goto done; }
++
++    apu->regs[NV_PAPU_GPSADDR] = 0x100;
++    apu->regs[NV_PAPU_GPSMAXSGE] = 0;
++    memcpy(apu->ram_ptr + 0x100, &page, sizeof(page));
++    mcpx_dsp_engine_write(&dsp->engine, MCPX_DSP_SPACE_X, 0, NODE_POINTER_EOL);
++    mcpx_dsp_engine_write(&dsp->engine, MCPX_DSP_SPACE_X, 1,
++        (1u << 1) | (0xFu << 5) | (2u << 10) | (1u << 14));
++    mcpx_dsp_engine_write(&dsp->engine, MCPX_DSP_SPACE_X, 2, 1);
++    mcpx_dsp_engine_write(&dsp->engine, MCPX_DSP_SPACE_X, 3, 0x10);
++    mcpx_dsp_engine_write(&dsp->engine, MCPX_DSP_SPACE_X, 4, 0);
++    mcpx_dsp_engine_write(&dsp->engine, MCPX_DSP_SPACE_X, 5, 0);
++    mcpx_dsp_engine_write(&dsp->engine, MCPX_DSP_SPACE_X, 6, 0xFFF);
++    mcpx_dsp_engine_write(&dsp->engine, MCPX_DSP_SPACE_X, 0x10, 0x123456);
++    dsp_dma_write(&dsp->dma, DMA_NEXT_BLOCK, 0);
++    dsp_dma_write(&dsp->dma, DMA_CONTROL, DMA_CONTROL_ACTION_START);
++    if (apu->ram_ptr[0x2000] != 0 || apu->ram_ptr[0x2001] != 0x56 ||
++        apu->ram_ptr[0x2002] != 0x34 || apu->ram_ptr[0x2003] != 0x12 ||
++        dsp->dma.error) { result = 4; goto done; }
++
++    /* A physical page overlapping the backing boundary is rejected without
++     * wrapping, and reports a DMA error rather than unpacking old bytes. */
++    dsp_dma_reset(&dsp->dma);
++    page = 0x4000;
++    memcpy(apu->ram_ptr + 0x100, &page, sizeof(page));
++    dsp_dma_write(&dsp->dma, DMA_NEXT_BLOCK, 0);
++    dsp_dma_write(&dsp->dma, DMA_CONTROL, DMA_CONTROL_ACTION_START);
++    if (!dsp->dma.error ||
++        !(dsp->dma.pending_interrupts & DMA_INTERRUPT_ERROR) ||
++        apu->ram_ptr[0x3FFF] != 0) result = 5;
++
++done:
++    mcpx_apu_dsp_finalize(apu);
++    free(apu->ram_ptr);
++    free(apu);
++    return result;
++}
++
++static int check_ep_fifo_survives_frame_mixdown(void)
++{
++    MCPXAPUState *apu = (MCPXAPUState *)calloc(1, sizeof(*apu));
++    float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME] = {{0}};
++    int16_t expected[256][2];
++    uint32_t page = 0x2000;
++    int result = 0;
++    if (!apu) return 1;
++    apu->ram_size = 0x4000;
++    apu->ram_ptr = (uint8_t *)calloc(1, apu->ram_size);
++    if (!apu->ram_ptr) { free(apu); return 2; }
++    mcpx_apu_dsp_init(apu);
++    DSPState *ep = apu->ep.dsp;
++    if (!ep || !ep->engine_ready) { result = 3; goto done; }
++
++    apu->monitor.point = MCPX_APU_DEBUG_MON_EP;
++    apu->regs[NV_PAPU_EPFADDR] = 0x100;
++    apu->regs[NV_PAPU_EPFMAXSGE] = 0;
++    apu->regs[NV_PAPU_EPOFBASE0] = 0;
++    apu->regs[NV_PAPU_EPOFEND0] = 0x800;
++    memcpy(apu->ram_ptr + 0x100, &page, sizeof(page));
++    ep->core.xram[0] = NODE_POINTER_EOL;
++    ep->core.xram[1] = NODE_CONTROL_DIRECTION | (1u << 10) | (1u << 14);
++    ep->core.xram[2] = 512;
++    ep->core.xram[3] = 0x100;
++    for (unsigned i = 0; i < 256; ++i) {
++        for (unsigned ch = 0; ch < 2; ++ch) {
++            expected[i][ch] = (int16_t)(1000 + 2 * i + ch);
++            ep->core.xram[0x100 + 2 * i + ch] =
++                (uint32_t)(uint16_t)expected[i][ch] << 8;
++        }
++    }
++    for (unsigned i = 0; i < NUM_SAMPLES_PER_FRAME; ++i) {
++        mixbins[0][i] = 0.25f;
++        mixbins[1][i] = -0.25f;
++    }
++    /* Execute the real peripheral DMA kick from an enabled EP frame:
++     * MOVEP #0,X:$FFFFD4; MOVEP #START,X:$FFFFD6; HALT; JMP $6.
++     * The block differs from fallback mixbins, so a lost native slice is
++     * observable even if all later ticks keep producing fallback audio. */
++    ep->core.pram[0] = 0x08F494;
++    ep->core.pram[1] = 0;
++    ep->core.pram[2] = 0x08F496;
++    ep->core.pram[3] = DMA_CONTROL_ACTION_START;
++    ep->core.pram[4] = 0x08F484;
++    ep->core.pram[5] = 1;
++    ep->core.pram[6] = 0x0C0006;
++    apu->ep.regs[NV_PAPU_EPRST] =
++        NV_PAPU_GPRST_GPRST | NV_PAPU_GPRST_GPDSPRST;
++    for (unsigned tick = 0; tick < 8; ++tick) {
++        apu->ep_frame_div = tick;
++        mcpx_apu_dsp_frame(apu, mixbins);
++        if (memcmp(apu->monitor.frame_buf, expected, sizeof(expected))) {
++            fprintf(stderr, "EP tick %u PC=%06X cycles=%u error=%u valid=%u"
++                    " FIFOcur=%u sample=%d expected=%d\n", tick,
++                    ep->core.pc, ep->core.cycle_count, ep->dma.error,
++                    apu->monitor.ep_fifo_frame_valid,
++                    apu->regs[NV_PAPU_EPOFCUR0],
++                    apu->monitor.frame_buf[0][0], expected[0][0]);
++            result = 4;
++            goto done;
++        }
++        /* Native ownership lasts through the epoch even if execution stops. */
++        apu->ep.regs[NV_PAPU_EPRST] = 0;
++    }
++    if (memcmp(apu->ram_ptr + page, expected, sizeof(expected))) {
++        result = 5;
++        goto done;
++    }
++
++    /* Consumption releases ownership: the next epoch can use fallback. */
++    mcpx_apu_monitor_frame(apu);
++    apu->ep_frame_div = 8;
++    mcpx_apu_dsp_frame(apu, mixbins);
++    for (unsigned i = 0; i < NUM_SAMPLES_PER_FRAME; ++i) {
++        if (apu->monitor.frame_buf[i][0] != 8191 ||
++            apu->monitor.frame_buf[i][1] != -8191) {
++            result = 6;
++            goto done;
++        }
++    }
++
++    /* A capture on the final tick replaces earlier fallback slices as a
++     * whole block too, including the default combined GP/EP monitor. */
++    mcpx_dsp_engine_reset(&ep->engine);
++    dsp_dma_reset(&ep->dma);
++    apu->regs[NV_PAPU_EPOFCUR0] = 0;
++    apu->monitor.point = MCPX_APU_DEBUG_MON_GP_OR_EP;
++    for (unsigned tick = 0; tick < 8; ++tick) {
++        apu->ep_frame_div = 8 + tick;
++        apu->ep.regs[NV_PAPU_EPRST] = tick == 7
++            ? NV_PAPU_GPRST_GPRST | NV_PAPU_GPRST_GPDSPRST : 0;
++        mcpx_apu_dsp_frame(apu, mixbins);
++    }
++    if (memcmp(apu->monitor.frame_buf, expected, sizeof(expected))) {
++        result = 8;
++        goto done;
++    }
++    mcpx_apu_monitor_frame(apu);
++
++    /* EP output cannot replace the user's VP debug monitoring buffer. */
++    mcpx_dsp_engine_reset(&ep->engine);
++    dsp_dma_reset(&ep->dma);
++    apu->regs[NV_PAPU_EPOFCUR0] = 0;
++    apu->ep.regs[NV_PAPU_EPRST] =
++        NV_PAPU_GPRST_GPRST | NV_PAPU_GPRST_GPDSPRST;
++    apu->monitor.point = MCPX_APU_DEBUG_MON_VP;
++    memset(apu->monitor.frame_buf, 0x5A, sizeof(apu->monitor.frame_buf));
++    apu->ep_frame_div = 16;
++    mcpx_apu_dsp_frame(apu, mixbins);
++    for (unsigned i = 0; i < 256; ++i) {
++        if (apu->monitor.frame_buf[i][0] != 0x5A5A ||
++            apu->monitor.frame_buf[i][1] != 0x5A5A) {
++            result = 7;
++            goto done;
++        }
++    }
++
++done:
++    mcpx_apu_dsp_finalize(apu);
++    free(apu->ram_ptr);
++    free(apu);
++    return result;
++}
++
++int main(void)
++{
++    int result = check_dsp_trace_event_flags();
++    if (result) {
++        fprintf(stderr, "DSP trace event test failed (%d)\n", result);
++        return result;
++    }
++    result = check_pc_and_p_write_invalidation();
++    if (result) {
++        fprintf(stderr, "DSP PC/P-memory test failed (%d)\n", result);
++        return result;
++    }
++    result = check_memory_spaces_and_instances_are_independent();
++    if (result) {
++        fprintf(stderr, "DSP memory isolation test failed (%d)\n", result);
++        return result + 10;
++    }
++    result = check_peripheral_callbacks();
++    if (result) {
++        fprintf(stderr, "DSP peripheral callback test failed (%d)\n", result);
++        return result + 20;
++    }
++    result = check_mixbuffer_alias();
++    if (result) {
++        fprintf(stderr, "DSP mixbuffer alias test failed (%d)\n", result);
++        return result + 30;
++    }
++    result = check_apu_frame_runs_enabled_core();
++    if (result) {
++        fprintf(stderr, "APU DSP frame scheduling test failed (%d)\n", result);
++        return result + 40;
++    }
++    result = test_dsp_dma_transfer();
++    if (result) {
++        fprintf(stderr, "DSP DMA transfer test failed (%d)\n", result);
++        return result + 50;
++    }
++    result = check_apu_dma_sge_bounds();
++    if (result) {
++        fprintf(stderr, "APU DMA SGE bounds test failed (%d)\n", result);
++        return result + 60;
++    }
++    result = check_ep_fifo_survives_frame_mixdown();
++    if (result) {
++        fprintf(stderr, "EP FIFO output ownership test failed (%d)\n", result);
++        return result + 70;
++    }
++    puts("DSP core C API tests passed");
++    return 0;
++}
+diff --git a/tests/apu_mixdown/CMakeLists.txt b/tests/apu_mixdown/CMakeLists.txt
+index 30bc3c7..40bf4e9 100644
+--- a/tests/apu_mixdown/CMakeLists.txt
++++ b/tests/apu_mixdown/CMakeLists.txt
+@@ -3,7 +3,10 @@ project(apu_mixdown_test C)
+ set(CMAKE_C_STANDARD 11)
+ add_subdirectory(../.. runtime)
+ add_executable(apu_mixdown_test test_main.c)
+-target_include_directories(apu_mixdown_test PRIVATE ../../src ../../src/apu)
++target_include_directories(apu_mixdown_test PRIVATE
++    ../../src
++    ../../src/apu
++)
+ target_link_libraries(apu_mixdown_test PRIVATE xbox_apu)
+ enable_testing()
+ # Registered TWICE, on purpose. mcpx_apu_mixdown_all caches its getenv in a
 diff --git a/tests/apu_mixdown/test_main.c b/tests/apu_mixdown/test_main.c
 index a2bd64c..4e22167 100644
 --- a/tests/apu_mixdown/test_main.c

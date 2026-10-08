@@ -14,6 +14,111 @@ using System.Windows.Forms;
 
 namespace BlackXboxLauncher
 {
+    internal static class VisualTraceFrames
+    {
+        internal const string Default = "120-240/30";
+        internal const string ErrorMessage = "Enter a frame (120), range (120-180), or stepped range (120-240/30). Values must be positive and the end frame must not precede the start.";
+
+        internal static string Normalize(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) throw new ArgumentException(ErrorMessage, "VisualTraceFrames");
+            string text = value.Trim();
+            string[] stepParts = text.Split('/');
+            if (stepParts.Length > 2) throw new ArgumentException(ErrorMessage, "VisualTraceFrames");
+            string[] rangeParts = stepParts[0].Split('-');
+            if (rangeParts.Length > 2) throw new ArgumentException(ErrorMessage, "VisualTraceFrames");
+            if (stepParts.Length == 2 && rangeParts.Length != 2) throw new ArgumentException(ErrorMessage, "VisualTraceFrames");
+            long first, last = 0, step = 1;
+            if (!PositiveDecimal(rangeParts[0], out first) ||
+                (rangeParts.Length == 2 && !PositiveDecimal(rangeParts[1], out last)) ||
+                (stepParts.Length == 2 && !PositiveDecimal(stepParts[1], out step)))
+                throw new ArgumentException(ErrorMessage, "VisualTraceFrames");
+            last = rangeParts.Length == 2 ? last : first;
+            if (last < first) throw new ArgumentException(ErrorMessage, "VisualTraceFrames");
+            string normalized = first.ToString(CultureInfo.InvariantCulture);
+            if (rangeParts.Length == 2) normalized += "-" + last.ToString(CultureInfo.InvariantCulture);
+            if (stepParts.Length == 2) normalized += "/" + step.ToString(CultureInfo.InvariantCulture);
+            return normalized;
+        }
+
+        private static bool PositiveDecimal(string value, out long number)
+        {
+            number = 0;
+            if (string.IsNullOrEmpty(value)) return false;
+            foreach (char character in value) if (character < '0' || character > '9') return false;
+            return long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out number) && number > 0;
+        }
+    }
+
+    internal static class KgpuDrawFrames
+    {
+        internal const int MaxFrames = 120;
+        internal const string ErrorMessage = "Enter a frame or frame,count (1-120 frames).";
+
+        internal static string Normalize(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) throw new ArgumentException(ErrorMessage, "KgpuDrawLogFrames");
+            string[] parts = value.Trim().Split(',');
+            int first, count = 1;
+            if (parts.Length < 1 || parts.Length > 2 || !Positive(parts[0], out first) ||
+                (parts.Length == 2 && !Positive(parts[1], out count)) || count > MaxFrames)
+                throw new ArgumentException(ErrorMessage, "KgpuDrawLogFrames");
+            return first.ToString(CultureInfo.InvariantCulture) + (parts.Length == 2 ? "," + count.ToString(CultureInfo.InvariantCulture) : "");
+        }
+
+        private static bool Positive(string value, out int number)
+        {
+            number = 0;
+            if (string.IsNullOrEmpty(value)) return false;
+            foreach (char character in value) if (character < '0' || character > '9') return false;
+            return int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out number) && number > 0;
+        }
+    }
+
+    internal sealed class VisualTraceLog : IDisposable
+    {
+        internal const long DefaultLimit = 1024 * 1024;
+        private const int FooterReserve = 128;
+        private readonly object gate = new object();
+        private readonly StreamWriter writer;
+        private readonly long limit;
+        private readonly string truncationTag;
+        private long bytesWritten, discardedLines;
+        private bool complete;
+
+        internal VisualTraceLog(string path, long maxBytes = DefaultLimit, string tag = "[KTRACE]")
+        {
+            if (maxBytes < FooterReserve) throw new ArgumentOutOfRangeException("maxBytes");
+            limit = maxBytes;
+            truncationTag = tag;
+            writer = new StreamWriter(path, false, new UTF8Encoding(false));
+        }
+
+        internal void WriteLine(string line)
+        {
+            lock (gate)
+            {
+                if (complete) return;
+                int lineBytes = Encoding.UTF8.GetByteCount(line) + Encoding.UTF8.GetByteCount(Environment.NewLine);
+                if (bytesWritten + lineBytes > limit - FooterReserve) { discardedLines++; return; }
+                writer.WriteLine(line); writer.Flush(); bytesWritten += lineBytes;
+            }
+        }
+
+        internal void Complete()
+        {
+            lock (gate)
+            {
+                if (complete) return;
+                if (discardedLines > 0)
+                    writer.WriteLine(truncationTag + " TRUNCATED: " + discardedLines.ToString(CultureInfo.InvariantCulture) + " lines discarded (limit " + limit.ToString(CultureInfo.InvariantCulture) + " bytes).");
+                writer.Flush(); complete = true;
+            }
+        }
+
+        public void Dispose() { try { Complete(); } finally { writer.Dispose(); } }
+    }
+
     internal static class Program
     {
         [System.Runtime.InteropServices.DllImport("user32.dll")]
@@ -92,7 +197,7 @@ namespace BlackXboxLauncher
 
     internal sealed class LaunchOptions
     {
-        public int SettingsVersion = 8;
+        public int SettingsVersion = 10;
         // GpuRenderer draws the game's NV2A graphics on the GPU (Direct3D 11) and presents it directly;
         // off keeps the CPU Kelvin renderer. Smooth60 runs the game's clock at 60 steps per second so
         // 60 presented frames are 60 simulated frames (the original runs at 30).
@@ -103,6 +208,11 @@ namespace BlackXboxLauncher
         public int Threads = Math.Max(1, Math.Min(16, Environment.ProcessorCount / 2));
         public bool SkipMovies;
         public bool AdvanceMenus;
+        public bool VisualTraceEnabled;
+        public string VisualTraceFrames = BlackXboxLauncher.VisualTraceFrames.Default;
+        // Empty disables the per-draw GPU trace. The KGPU logger accepts frame[,count].
+        public string KgpuDrawLogFrames = "";
+        public bool DspTraceEnabled;
         // The window's client size. The picture the game renders is a separate setting, InternalHeight: a number of
         // lines (480p..2160p) whose width follows the camera aspect, scaled to the window.
         public int OutputWidth = 1280;
@@ -305,6 +415,16 @@ namespace BlackXboxLauncher
             if (!MotionBlurAvailable && MotionBlur != "original") throw new InvalidOperationException("Motion blur controls are not supported by this build.");
             if (!IsOneOf(InputMode, "auto", "keyboard_mouse", "controller")) throw new ArgumentException("Invalid InputMode.");
             if (!IsOneOf(PromptMode, "auto", "keyboard_mouse", "controller")) throw new ArgumentException("Invalid PromptMode.");
+            if (VisualTraceEnabled)
+            {
+                if (GpuRenderer) throw new InvalidOperationException("Detailed per-draw tracing requires CPU Kelvin. Turn off GPU renderer in the Game tab before starting this diagnostic run.");
+                VisualTraceFrames = BlackXboxLauncher.VisualTraceFrames.Normalize(VisualTraceFrames);
+            }
+            if (!String.IsNullOrWhiteSpace(KgpuDrawLogFrames))
+            {
+                if (!GpuRenderer) throw new InvalidOperationException("The KGPU draw log requires the GPU renderer.");
+                KgpuDrawLogFrames = BlackXboxLauncher.KgpuDrawFrames.Normalize(KgpuDrawLogFrames);
+            }
             if (double.IsNaN(MouseSensitivity) || double.IsInfinity(MouseSensitivity) ||
                 MouseSensitivity < InputBindings.SensitivityMin || MouseSensitivity > InputBindings.SensitivityMax)
                 throw new ArgumentOutOfRangeException("MouseSensitivity");
@@ -329,6 +449,13 @@ namespace BlackXboxLauncher
             object rawFov;
             if (fields != null && fields.TryGetValue("VerticalFov", out rawFov) &&
                 !(rawFov is int || rawFov is decimal || rawFov is double)) fields.Remove("VerticalFov");
+            if (fields != null)
+            {
+                foreach (string name in new[] { "VisualTraceFrames", "KgpuDrawLogFrames" })
+                    if (fields.ContainsKey(name) && !(fields[name] is string)) fields.Remove(name);
+                foreach (string name in new[] { "VisualTraceEnabled", "DspTraceEnabled" })
+                    if (fields.ContainsKey(name) && !(fields[name] is bool)) fields.Remove(name);
+            }
             if (fields != null) InputBindings.SanitizeFields(fields);
             var settings = fields == null ? new LaunchOptions() : serializer.Deserialize<LaunchOptions>(serializer.Serialize(fields));
             var defaults = new LaunchOptions();
@@ -337,6 +464,10 @@ namespace BlackXboxLauncher
             settings.SettingsVersion = defaults.SettingsVersion;
             if (settings.Threads < 1 || settings.Threads > 64) settings.Threads = defaults.Threads;
             if (settings.SmoothHz != 0 && settings.SmoothHz != 120 && settings.SmoothHz != 240) settings.SmoothHz = defaults.SmoothHz;
+            try { settings.VisualTraceFrames = BlackXboxLauncher.VisualTraceFrames.Normalize(settings.VisualTraceFrames); }
+            catch (ArgumentException) { settings.VisualTraceFrames = defaults.VisualTraceFrames; }
+            try { settings.KgpuDrawLogFrames = String.IsNullOrWhiteSpace(settings.KgpuDrawLogFrames) ? "" : BlackXboxLauncher.KgpuDrawFrames.Normalize(settings.KgpuDrawLogFrames); }
+            catch (ArgumentException) { settings.KgpuDrawLogFrames = defaults.KgpuDrawLogFrames; }
             if (settings.OutputWidth < 320 || settings.OutputWidth > 7680) settings.OutputWidth = defaults.OutputWidth;
             if (settings.OutputHeight < 240 || settings.OutputHeight > 4320) settings.OutputHeight = defaults.OutputHeight;
             if (!IsInternalHeight(settings.InternalHeight)) settings.InternalHeight = defaults.InternalHeight;
@@ -592,6 +723,9 @@ namespace BlackXboxLauncher
         internal const string RetailHash = "DF2739C372D254A90AEECCF5971D12097F22D89FBB90DB021FDA96DD4DEB68F6";
         private Process process;
         private StreamWriter log;
+        private VisualTraceLog visualTraceLog;
+        private VisualTraceLog dspTraceLog;
+        private VisualTraceLog kgpuDrawTraceLog;
         private Mutex gameLock;
         private readonly object logGate = new object();
         internal string DirectoryPath { get; private set; }
@@ -676,6 +810,9 @@ namespace BlackXboxLauncher
             }
             if (options.Smooth60 && options.SmoothHz != 0) info.EnvironmentVariables["RECOMP_BLACK_HZ"] = options.SmoothHz.ToString(CultureInfo.InvariantCulture);
             else if (options.Smooth60) info.EnvironmentVariables["RECOMP_BLACK_60HZ"] = "1";
+            if (options.VisualTraceEnabled) info.EnvironmentVariables["RECOMP_KELVIN_TRACE"] = VisualTraceFrames.Normalize(options.VisualTraceFrames);
+            if (!String.IsNullOrWhiteSpace(options.KgpuDrawLogFrames)) info.EnvironmentVariables["RECOMP_KGPU_DRAWLOG"] = KgpuDrawFrames.Normalize(options.KgpuDrawLogFrames);
+            if (options.DspTraceEnabled) info.EnvironmentVariables["RECOMP_APU_TRACE_DSP_STATE"] = "1";
             // The video settings (window, internal resolution, camera, presenter) are not exported: the game reads
             // them from the settings file, which its own Video Settings page edits too, and a variable would pin
             // a value there. GameSession.Start writes the file from these options just before the game starts.
@@ -729,6 +866,9 @@ namespace BlackXboxLauncher
                 session.log = new StreamWriter(Path.Combine(session.DirectoryPath, "session.log"), false, new UTF8Encoding(false));
                 session.log.AutoFlush = true;
                 var info = CreateStartInfo(root, options);
+                if (options.VisualTraceEnabled) session.visualTraceLog = new VisualTraceLog(Path.Combine(session.DirectoryPath, "visual-trace.log"));
+                if (options.DspTraceEnabled) session.dspTraceLog = new VisualTraceLog(Path.Combine(session.DirectoryPath, "audio-dsp-trace.log"), VisualTraceLog.DefaultLimit, "[DSPTRACE]");
+                if (!String.IsNullOrWhiteSpace(options.KgpuDrawLogFrames)) session.kgpuDrawTraceLog = new VisualTraceLog(Path.Combine(session.DirectoryPath, "kgpu-draw-trace.log"), VisualTraceLog.DefaultLimit, "[KDL]");
                 Directory.CreateDirectory(Path.Combine(root, "local"));
                 File.WriteAllText(LaunchOptions.VideoIniPath(root), options.VideoIni(), new UTF8Encoding(false));
                 File.WriteAllText(Path.Combine(session.DirectoryPath, "video.ini"), options.VideoIni(), new UTF8Encoding(false));
@@ -744,11 +884,23 @@ namespace BlackXboxLauncher
                 metadata["workingDirectory"] = info.WorkingDirectory;
                 metadata["xbeSha256"] = RetailHash;
                 metadata["environment"] = environment;
+                metadata["visualTraceEnabled"] = options.VisualTraceEnabled;
+                metadata["visualTraceFrames"] = options.VisualTraceEnabled ? VisualTraceFrames.Normalize(options.VisualTraceFrames) : null;
+                metadata["visualTraceTimingWarning"] = options.VisualTraceEnabled ? "Detailed tracing synchronizes renderer work and can change frame timing. Compare performance with a normal run without visual tracing." : null;
+                metadata["dspTraceEnabled"] = options.DspTraceEnabled;
+                metadata["dspTraceFile"] = options.DspTraceEnabled ? "audio-dsp-trace.log" : null;
+                metadata["dspTraceLimitBytes"] = options.DspTraceEnabled ? VisualTraceLog.DefaultLimit : 0;
+                metadata["dspTraceSamplingNote"] = options.DspTraceEnabled ? "Records DSP frames, final PCM levels and EP FIFO output about once per second. monitor-point 0 is AC97; stack events shorter than one DSP frame may be missed." : null;
+                metadata["kgpuDrawLogEnabled"] = !String.IsNullOrWhiteSpace(options.KgpuDrawLogFrames);
+                metadata["kgpuDrawLogFrames"] = String.IsNullOrWhiteSpace(options.KgpuDrawLogFrames) ? null : KgpuDrawFrames.Normalize(options.KgpuDrawLogFrames);
+                metadata["kgpuDrawLogFile"] = String.IsNullOrWhiteSpace(options.KgpuDrawLogFrames) ? null : "kgpu-draw-trace.log";
+                metadata["kgpuDrawLogLimitBytes"] = String.IsNullOrWhiteSpace(options.KgpuDrawLogFrames) ? 0 : VisualTraceLog.DefaultLimit;
+                metadata["kgpuDrawLogTimingWarning"] = String.IsNullOrWhiteSpace(options.KgpuDrawLogFrames) ? null : "Per-draw GPU logging adds overhead during selected frames; do not use this run to compare normal performance.";
                 File.WriteAllText(Path.Combine(session.DirectoryPath, "launch.json"), new JavaScriptSerializer().Serialize(metadata));
                 session.Write("[launcher] BLACK PC / " + (options.GpuRenderer ? "GPU Kelvin (Direct3D 11)" : "CPU Kelvin") + (options.Smooth60 ? " / " + (options.SmoothHz != 0 ? options.SmoothHz : 60) + " FPS timing" : "") + " / " + options.Threads + " threads");
                 session.process = new Process { StartInfo = info };
-                session.process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e) { if (e.Data != null) session.Write(e.Data); };
-                session.process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e) { if (e.Data != null) session.Write("[stderr] " + e.Data); };
+                session.process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e) { if (e.Data != null) session.WriteOutput(e.Data, false); };
+                session.process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e) { if (e.Data != null) session.WriteOutput(e.Data, true); };
                 session.process.Start();
                 session.process.BeginOutputReadLine();
                 session.process.BeginErrorReadLine();
@@ -762,20 +914,46 @@ namespace BlackXboxLauncher
             }
         }
 
-        private void Write(string line)
+        internal void WriteOutput(string line, bool isError)
         {
             lock (logGate)
             {
-                try { if (log != null) log.WriteLine(line); }
+                try
+                {
+                    if (line.TrimStart().StartsWith("[KTRACE]", StringComparison.Ordinal))
+                    {
+                        if (visualTraceLog != null) visualTraceLog.WriteLine(line);
+                    }
+                    else if (line.TrimStart().StartsWith("[DSPTRACE]", StringComparison.Ordinal))
+                    {
+                        if (dspTraceLog != null) dspTraceLog.WriteLine(line);
+                    }
+                    else if (line.TrimStart().StartsWith("[KDL]", StringComparison.Ordinal))
+                    {
+                        if (kgpuDrawTraceLog != null) kgpuDrawTraceLog.WriteLine(line);
+                    }
+                    else if (log != null) log.WriteLine(isError ? "[stderr] " + line : line);
+                }
                 catch (Exception error) { LogFailure = error.Message; }
             }
         }
+
+        private void Write(string line) { WriteOutput(line, false); }
 
         internal int WaitForExit()
         {
             process.WaitForExit(); // Also drains redirected output.
             int code = process.ExitCode;
             Write("[launcher] Exit code: " + code);
+            lock (logGate)
+            {
+                // Finalize before exit.json and the UI capture LogFailure. Each log
+                // completes independently so a failed footer cannot skip another trace.
+                foreach (VisualTraceLog trace in new[] { visualTraceLog, dspTraceLog, kgpuDrawTraceLog })
+                    if (trace != null)
+                        try { trace.Complete(); }
+                        catch (Exception error) { LogFailure = error.Message; }
+            }
             return code;
         }
 
@@ -796,7 +974,13 @@ namespace BlackXboxLauncher
         public void Dispose()
         {
             if (process != null) { process.Dispose(); process = null; }
-            lock (logGate) { if (log != null) { log.Dispose(); log = null; } }
+            lock (logGate)
+            {
+                if (visualTraceLog != null) { try { visualTraceLog.Dispose(); } catch (Exception error) { LogFailure = error.Message; } visualTraceLog = null; }
+                if (dspTraceLog != null) { try { dspTraceLog.Dispose(); } catch (Exception error) { LogFailure = error.Message; } dspTraceLog = null; }
+                if (kgpuDrawTraceLog != null) { try { kgpuDrawTraceLog.Dispose(); } catch (Exception error) { LogFailure = error.Message; } kgpuDrawTraceLog = null; }
+                if (log != null) { log.Dispose(); log = null; }
+            }
             if (gameLock != null) { gameLock.ReleaseMutex(); gameLock.Dispose(); gameLock = null; }
         }
     }
@@ -989,6 +1173,10 @@ namespace BlackXboxLauncher
         private readonly ComboBox smoothRate = new ComboBox();
         private readonly CheckBox skipMovies = new CheckBox();
         private readonly CheckBox advanceMenus = new CheckBox();
+        private readonly CheckBox visualTraceEnabled = new CheckBox();
+        private readonly TextBox visualTraceFrames = new TextBox();
+        private readonly CheckBox dspTraceEnabled = new CheckBox();
+        private readonly TextBox kgpuDrawLogFrames = new TextBox();
         private readonly TabControl settingsTabs = new TabControl();
         private readonly ComboBox outputResolution = new ComboBox();
         private readonly ComboBox internalResolution = new ComboBox();
@@ -1028,25 +1216,27 @@ namespace BlackXboxLauncher
             this.previewOnly = previewOnly;
             logs = Path.Combine(root, "reports");
             Text = "BLACK | PC Launcher";
-            ClientSize = new Size(700, 660);
+            ClientSize = new Size(850, 680);
+            MinimumSize = new Size(860, 670);
             BackColor = Color.FromArgb(19, 23, 22);
             ForeColor = Color.FromArgb(239, 242, 236);
             Font = OwnFont(10, FontStyle.Regular);
             AutoScaleDimensions = new SizeF(96, 96);
             AutoScaleMode = AutoScaleMode.Dpi;
-            FormBorderStyle = FormBorderStyle.FixedSingle;
-            MaximizeBox = false;
+            FormBorderStyle = FormBorderStyle.Sizable;
+            MaximizeBox = true;
             StartPosition = FormStartPosition.CenterScreen;
-            Controls.Add(new Panel { BackColor = accent, Location = new Point(0, 0), Size = new Size(700, 4) });
+            Controls.Add(new Panel { BackColor = accent, Location = new Point(0, 0), Size = new Size(700, 4), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right });
             AddText("B L A C K", 30, 23, 640, 77, 43, FontStyle.Bold, ForeColor);
             AddText("BLACK  /  RECOMPILED FOR PC", 34, 107, 630, 23, 10, FontStyle.Bold, accent);
             AddText("Development build", 34, 155, 630, 26, 15, FontStyle.Bold, ForeColor);
             AddText("First-mission gameplay works with keyboard and mouse or a controller.\nThis is an experimental build; crashes and inaccuracies remain.", 34, 190, 630, 50, 11, FontStyle.Regular, muted);
-            settingsTabs.SetBounds(34, 264, 632, 218);
-            var display = new TabPage("Display") { BackColor = BackColor, ForeColor = ForeColor };
-            var game = new TabPage("Game") { BackColor = BackColor, ForeColor = ForeColor };
-            var graphics = new TabPage("Graphics") { BackColor = BackColor, ForeColor = ForeColor };
-            var input = new TabPage("Input") { BackColor = BackColor, ForeColor = ForeColor };
+            settingsTabs.SetBounds(34, 264, 782, 211);
+            settingsTabs.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            var display = new TabPage("Display") { BackColor = BackColor, ForeColor = ForeColor, AutoScroll = true };
+            var game = new TabPage("Game") { BackColor = BackColor, ForeColor = ForeColor, AutoScroll = true };
+            var graphics = new TabPage("Graphics") { BackColor = BackColor, ForeColor = ForeColor, AutoScroll = true };
+            var input = new TabPage("Input") { BackColor = BackColor, ForeColor = ForeColor, AutoScroll = true };
             settingsTabs.TabPages.Add(display); settingsTabs.TabPages.Add(graphics); settingsTabs.TabPages.Add(input); settingsTabs.TabPages.Add(game);
             Controls.Add(settingsTabs);
             AddOptionLabel(display, "Window size", 14, 16, 95);
@@ -1209,15 +1399,37 @@ namespace BlackXboxLauncher
             advanceMenus.Text = "Advance startup menus automatically (first 65 seconds)";
             advanceMenus.AccessibleName = advanceMenus.Text;
             game.Controls.Add(advanceMenus);
-            status.SetBounds(34, 489, 630, 27); status.Font = OwnFont(11, FontStyle.Bold);
+            visualTraceEnabled.SetBounds(14, 174, 245, 28);
+            visualTraceEnabled.Text = "Detailed visual trace";
+            visualTraceEnabled.AccessibleName = visualTraceEnabled.Text;
+            game.Controls.Add(visualTraceEnabled);
+            AddOptionLabel(game, "Frames (start-end/step)", 266, 177, 188);
+            visualTraceFrames.SetBounds(455, 173, 147, 29);
+            visualTraceFrames.Text = VisualTraceFrames.Default;
+            visualTraceFrames.AccessibleName = "Visual trace frames";
+            game.Controls.Add(visualTraceFrames);
+            visualTraceFrames.Enabled = false;
+            visualTraceEnabled.CheckedChanged += delegate { visualTraceFrames.Enabled = visualTraceEnabled.Checked; };
+            settingsTip.SetToolTip(visualTraceEnabled, "Records detailed [KTRACE] drawing data in reports\\...\\visual-trace.log (maximum 1 MB). Requires CPU Kelvin; turn off GPU renderer for this diagnostic. The renderer synchronizes work during collection, which can change frame timing. Use an untraced run for performance comparisons.");
+            settingsTip.SetToolTip(visualTraceFrames, "Examples: 120, 120-180, or 120-240/30. Requires CPU Kelvin and can change frame timing; compare performance with a normal run.");
+            dspTraceEnabled.SetBounds(14, 206, 590, 28); dspTraceEnabled.Text = "Detailed DSP state trace (GP/EP stack)";
+            dspTraceEnabled.AccessibleName = dspTraceEnabled.Text; game.Controls.Add(dspTraceEnabled);
+            settingsTip.SetToolTip(dspTraceEnabled, "Records GP/EP state, EP output FIFO activity, and final PCM levels about once per second in reports\\...\\audio-dsp-trace.log (maximum 1 MB). No audio is saved; short stack events may be missed.");
+            AddOptionLabel(game, "GPU draw log (frame,count)", 286, 241, 166);
+            kgpuDrawLogFrames.SetBounds(455, 237, 147, 29);
+            kgpuDrawLogFrames.AccessibleName = "GPU draw log frames";
+            game.Controls.Add(kgpuDrawLogFrames);
+            settingsTip.SetToolTip(kgpuDrawLogFrames, "Leave blank to keep this diagnostic off. Example: 2400,2 records at most 2 frames to reports\\...\\kgpu-draw-trace.log (maximum 1 MB). Requires GPU Kelvin and adds overhead during those frames.");
+            status.SetBounds(34, 490, 782, 27); status.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom; status.Font = OwnFont(11, FontStyle.Bold);
             Controls.Add(status);
-            detail.SetBounds(34, 519, 630, 43); detail.ForeColor = muted;
+            detail.SetBounds(34, 520, 782, 43); detail.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom; detail.ForeColor = muted;
             Controls.Add(detail);
-            StyleButton(play, "PLAY", 34, 572, 190, true);
-            StyleButton(stop, "Stop game", 236, 572, 122, false); stop.Enabled = false;
-            var openLogs = new Button(); StyleButton(openLogs, "Open logs", 370, 572, 140, false);
-            var controls = new Button(); StyleButton(controls, "Controls", 522, 572, 144, false);
-            AddText("BLACK PC  /  Local saves", 34, 633, 630, 22, 9, FontStyle.Regular, muted);
+            StyleButton(play, "PLAY", 109, 575, 190, true); play.Anchor = AnchorStyles.Bottom;
+            StyleButton(stop, "Stop game", 311, 575, 122, false); stop.Anchor = AnchorStyles.Bottom; stop.Enabled = false;
+            var openLogs = new Button(); StyleButton(openLogs, "Open logs", 445, 575, 140, false); openLogs.Anchor = AnchorStyles.Bottom;
+            var controls = new Button(); StyleButton(controls, "Controls", 597, 575, 144, false); controls.Anchor = AnchorStyles.Bottom;
+            var localSaves = new Label { Text = "BLACK PC  /  Local saves", Location = new Point(34, 635), Size = new Size(782, 22), Font = OwnFont(9, FontStyle.Regular), ForeColor = muted, Anchor = AnchorStyles.Left | AnchorStyles.Bottom };
+            Controls.Add(localSaves);
             LoadSettings();
             play.Click += delegate { StartGame(); };
             stop.Click += delegate { StopGame(); };
@@ -1344,6 +1556,10 @@ namespace BlackXboxLauncher
                 if (haveVideo) settings.ApplyVideoIni(File.ReadAllText(VideoPath));
                 threads.Value = settings.Threads;
                 skipMovies.Checked = settings.SkipMovies; advanceMenus.Checked = settings.AdvanceMenus;
+                visualTraceEnabled.Checked = settings.VisualTraceEnabled;
+                visualTraceFrames.Text = settings.VisualTraceFrames;
+                kgpuDrawLogFrames.Text = settings.KgpuDrawLogFrames ?? "";
+                dspTraceEnabled.Checked = settings.DspTraceEnabled;
                 gpuRenderer.Checked = settings.GpuRenderer; smooth60.Checked = settings.Smooth60;
                 SelectChoice(smoothRate, settings.SmoothHz.ToString(CultureInfo.InvariantCulture)); smoothRate.Enabled = smooth60.Checked;
                 ShowVideo(settings);
@@ -1369,6 +1585,9 @@ namespace BlackXboxLauncher
                 AntiAliasing = ChoiceValue(antiAliasing), Anisotropy = int.Parse(ChoiceValue(anisotropy), CultureInfo.InvariantCulture),
                 DepthOfField = ChoiceValue(depthOfField), Sharpening = ChoiceValue(sharpening),
                 AoMethod = ChoiceValue(aoMethod), AoQuality = ChoiceValue(aoQuality),
+                VisualTraceEnabled = visualTraceEnabled.Checked, VisualTraceFrames = visualTraceFrames.Text,
+                KgpuDrawLogFrames = kgpuDrawLogFrames.Text,
+                DspTraceEnabled = dspTraceEnabled.Checked,
                 WindowMode = ChoiceValue(windowMode), ScaleMode = ChoiceValue(scaleMode), PresentFilter = ChoiceValue(presentFilter),
                 VSync = vsync.Checked, FpsLimit = int.Parse(ChoiceValue(fpsLimit), CultureInfo.InvariantCulture),
                 CameraAspect = ChoiceValue(cameraAspect), MotionBlur = ChoiceValue(motionBlur),
@@ -1395,12 +1614,20 @@ namespace BlackXboxLauncher
             if (previewOnly || session != null) return;
             try
             {
+                var options = Options();
+                options.Validate();
                 SaveSettings();
-                session = GameSession.Start(root, Options()); logs = session.DirectoryPath;
+                session = GameSession.Start(root, options); logs = session.DirectoryPath;
                 play.Enabled = settingsTabs.Enabled = false;
                 stop.Enabled = true; stopped = false;
                 status.Text = "Game running";
-                detail.Text = "Use the BLACK PC window to play.\nStop ends the game process; finish saving first.";
+                detail.Text = options.VisualTraceEnabled
+                    ? "Visual trace may change frame timing. Compare performance with a normal run.\nDetailed data: visual-trace.log (max 1 MB)."
+                    : options.DspTraceEnabled
+                    ? "DSP trace samples GP/EP and final PCM levels about once per second; timing may shift slightly.\nDetailed data: audio-dsp-trace.log (max 1 MB)."
+                    : !String.IsNullOrWhiteSpace(options.KgpuDrawLogFrames)
+                    ? "GPU draw logging adds overhead on selected frames.\nDetailed data: kgpu-draw-trace.log (max 1 MB)."
+                    : "Use the BLACK PC window to play.\nStop ends the game process; finish saving first.";
                 var running = session;
                 Task.Factory.StartNew(delegate
                 {

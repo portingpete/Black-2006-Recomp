@@ -17,6 +17,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.98.1
+          target: x86_64-pc-windows-msvc
       - name: Prepare pinned runtime
         shell: pwsh
         run: |
@@ -30,6 +34,38 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Runtime patch preflight failed' }
           git -C third_party/xboxrecomp apply "$PWD/patches/xboxrecomp.patch"
           if ($LASTEXITCODE -ne 0) { throw 'Runtime patch failed' }
+      - name: Prepare pinned DSP56300 core
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path .work -Force | Out-Null
+          git clone https://github.com/mborgerson/dsp56300.git .work/err009-dsp56300
+          if ($LASTEXITCODE -ne 0) { throw 'DSP56300 clone failed' }
+          git -C .work/err009-dsp56300 checkout --detach aab3649fc452daf03da8b5e36fdc0c308d874101
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned DSP56300 checkout failed' }
+      - name: Build and run DSP core and DMA regressions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake -S third_party/xboxrecomp/tests/apu_dsp_core -B build-apu-dsp-core -G "Visual Studio 17 2022" -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'DSP core test configure failed' }
+          cmake --build build-apu-dsp-core --config Release
+          if ($LASTEXITCODE -ne 0) { throw 'DSP core test build failed' }
+          ctest --test-dir build-apu-dsp-core -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'DSP core regression failed' }
+      - name: Build and run all mixbin regressions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake -S third_party/xboxrecomp/tests/apu_mixdown -B build-apu-mixdown -G "Visual Studio 17 2022" -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'APU mixdown test configure failed' }
+          cmake --build build-apu-mixdown --config Release
+          if ($LASTEXITCODE -ne 0) { throw 'APU mixdown test build failed' }
+          ctest --test-dir build-apu-mixdown -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'APU mixdown regression failed' }
+      - name: Build and run launcher settings regressions
+        shell: pwsh
+        run: ./tests/ambient_occlusion/test-launcher.ps1
       - name: Test generated-source audit and indirect-call feedback
         run: python scripts/test_generate.py
       - name: Build and run EEPROM regression
