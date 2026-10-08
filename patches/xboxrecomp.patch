@@ -248,7 +248,7 @@ index f7b9f8f..06754f2 100644
  uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size);
  
 diff --git a/src/apu/apu_core.c b/src/apu/apu_core.c
-index 459be77..7257a1f 100644
+index 459be77..687b74a 100644
 --- a/src/apu/apu_core.c
 +++ b/src/apu/apu_core.c
 @@ -21,6 +21,7 @@
@@ -393,15 +393,21 @@ index 459be77..7257a1f 100644
      if (xa2_is_active()) {
          xa2_shutdown();
          return;
-@@ -270,96 +331,89 @@ void mcpx_apu_monitor_finalize(MCPXAPUState *d)
+@@ -270,96 +331,97 @@ void mcpx_apu_monitor_finalize(MCPXAPUState *d)
  
  void mcpx_apu_monitor_frame(MCPXAPUState *d)
  {
 -    if ((d->ep_frame_div + 1) % 8) {
 -        return;
--    }
 +    if ((d->ep_frame_div + 1) % 8) return;
 +    d->monitor.ep_fifo_frame_valid = false;
++
++    /* EP FIFO writes can be split across DMA descriptors. Consume only a
++     * complete block at the output boundary and discard any partial tail. */
++    if (d->ep.dsp) {
++        d->ep.dsp->ep_fifo_frame_bytes_used = 0;
++        d->ep.dsp->ep_fifo_frame_ready = false;
+     }
  
 -    /* XAudio2 path: render and submit a buffer */
 -    if (xa2_is_active()) {
@@ -463,11 +469,12 @@ index 459be77..7257a1f 100644
 -            memcpy(xa2_tmp + out_offset, d->monitor.frame_buf, chunk * 2 * sizeof(int16_t));
 -            out_offset += chunk;
 -            remaining -= chunk;
-+            fprintf(stderr, "[DSPTRACE] event=audio-block block=%llu nonzero=%u/%u peak=%u mean-square=%llu ep-fifo-writes=%llu ep-fifo-captured=%llu monitor-point=%u\n",
++            fprintf(stderr, "[DSPTRACE] event=audio-block block=%llu nonzero=%u/%u peak=%u mean-square=%llu ep-fifo-writes=%llu ep-fifo-bytes=%llu ep-fifo-captured=%llu monitor-point=%u\n",
 +                    (unsigned long long)block, nonzero,
 +                    (unsigned int)(MIXER_FRAME_SAMPLES * 2), peak,
 +                    (unsigned long long)(square_sum / (MIXER_FRAME_SAMPLES * 2)),
 +                    (unsigned long long)d->dsp_trace_ep_fifo_writes,
++                    (unsigned long long)d->dsp_trace_ep_fifo_bytes,
 +                    (unsigned long long)d->dsp_trace_ep_fifo_captured,
 +                    (unsigned int)d->monitor.point);
          }
@@ -562,7 +569,7 @@ index 459be77..7257a1f 100644
  }
  
  /* ============================================================
-@@ -432,6 +486,21 @@ static void se_frame(MCPXAPUState *d)
+@@ -432,6 +494,21 @@ static void se_frame(MCPXAPUState *d)
   * APU frame thread (background processing)
   * ============================================================ */
  
@@ -584,7 +591,7 @@ index 459be77..7257a1f 100644
  static void *mcpx_apu_frame_thread(void *arg)
  {
      MCPXAPUState *d = MCPX_APU_DEVICE(arg);
-@@ -446,6 +515,25 @@ static void *mcpx_apu_frame_thread(void *arg)
+@@ -446,6 +523,25 @@ static void *mcpx_apu_frame_thread(void *arg)
              continue;
          }
  
@@ -610,7 +617,7 @@ index 459be77..7257a1f 100644
          /* Always run the audio output loop — the software mixer and test tone
           * need continuous frame delivery regardless of APU register state.
           * The VP/DSP pipeline (se_frame) only runs when registers allow it. */
-@@ -460,8 +548,16 @@ static void *mcpx_apu_frame_thread(void *arg)
+@@ -460,8 +556,16 @@ static void *mcpx_apu_frame_thread(void *arg)
  
          if (apu_active && !g_test_tone.active) {
              /* Full pipeline: VP voices → DSP → monitor → waveOut */
@@ -627,7 +634,7 @@ index 459be77..7257a1f 100644
              /* Lightweight: just monitor frame (test tone + software mixer) */
              mcpx_apu_monitor_frame(d);
              d->ep_frame_div++;
-@@ -499,6 +595,7 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
+@@ -499,6 +603,7 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
  {
      memset(d->regs, 0, sizeof(d->regs));
      mcpx_apu_vp_reset(d);
@@ -635,7 +642,7 @@ index 459be77..7257a1f 100644
  
      if (d->gp.dsp) {
          memset((void *)d->gp.dsp->core.pram_opcache, 0,
-@@ -516,6 +613,11 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
+@@ -516,6 +621,11 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
   * ============================================================ */
  
  MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
@@ -647,7 +654,7 @@ index 459be77..7257a1f 100644
  {
      MCPXAPUState *d = (MCPXAPUState *)calloc(1, sizeof(MCPXAPUState));
      if (!d) {
-@@ -526,6 +628,10 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
+@@ -526,6 +636,10 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
      g_apu_ram_ptr = ram_ptr;
      g_state = d;
      d->ram_ptr = ram_ptr;
@@ -658,7 +665,7 @@ index 459be77..7257a1f 100644
  
      d->set_irq = false;
      d->exiting = false;
-@@ -581,6 +687,7 @@ void mcpx_apu_shutdown(MCPXAPUState *d)
+@@ -581,6 +695,7 @@ void mcpx_apu_shutdown(MCPXAPUState *d)
  
      qemu_thread_join(&d->apu_thread);
      mcpx_apu_vp_finalize(d);
@@ -666,7 +673,7 @@ index 459be77..7257a1f 100644
      mcpx_apu_monitor_finalize(d);
  
      free(d);
-@@ -614,8 +721,12 @@ void mcpx_apu_dispatch_mmio(MCPXAPUState *d, hwaddr addr, uint64_t val,
+@@ -614,8 +729,12 @@ void mcpx_apu_dispatch_mmio(MCPXAPUState *d, hwaddr addr, uint64_t val,
          if (is_write) {
              mcpx_apu_write(d, addr, val, size);
          }
@@ -680,7 +687,7 @@ index 459be77..7257a1f 100644
  }
  
  /* ============================================================
-@@ -630,6 +741,10 @@ uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size)
+@@ -630,6 +749,10 @@ uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size)
          return mcpx_apu_vp_read(d, addr - 0x20000, size);
      } else if (addr < 0x20000) {
          return mcpx_apu_read(d, (hwaddr)addr, size);
@@ -1567,7 +1574,7 @@ index 0000000..356a5f4
 +
 +#endif
 diff --git a/src/apu/apu_dsp.c b/src/apu/apu_dsp.c
-index de14f26..e69a617 100644
+index de14f26..eb4d096 100644
 --- a/src/apu/apu_dsp.c
 +++ b/src/apu/apu_dsp.c
 @@ -1,17 +1,6 @@
@@ -1589,7 +1596,7 @@ index de14f26..e69a617 100644
   *
   * Copyright (c) 2012 espes
   * Copyright (c) 2019-2025 Matt Borgerson
-@@ -24,10 +13,513 @@
+@@ -24,10 +13,549 @@
  
  #include "apu_state.h"
  #include "fpconv.h"
@@ -1689,6 +1696,35 @@ index de14f26..e69a617 100644
 +    return ok;
 +}
 +
++static void dsp_capture_ep_fifo_chunk(DSPState *dsp, const uint8_t *bytes,
++                                      size_t len)
++{
++    const size_t frame_size = sizeof(dsp->ep_fifo_frame_buf);
++
++    if (len >= frame_size) {
++        bytes += len - frame_size;
++        memcpy(dsp->ep_fifo_frame_buf, bytes, frame_size);
++        dsp->ep_fifo_frame_bytes_used = frame_size;
++        dsp->ep_fifo_frame_ready = true;
++        return;
++    }
++
++    if (dsp->ep_fifo_frame_bytes_used + len > frame_size) {
++        size_t discard = dsp->ep_fifo_frame_bytes_used + len - frame_size;
++        memmove(dsp->ep_fifo_frame_buf,
++                (uint8_t *)dsp->ep_fifo_frame_buf + discard,
++                frame_size - discard);
++        dsp->ep_fifo_frame_bytes_used -= discard;
++    }
++
++    memcpy((uint8_t *)dsp->ep_fifo_frame_buf +
++               dsp->ep_fifo_frame_bytes_used,
++           bytes, len);
++    dsp->ep_fifo_frame_bytes_used += len;
++    if (dsp->ep_fifo_frame_bytes_used == frame_size)
++        dsp->ep_fifo_frame_ready = true;
++}
++
 +static bool dsp_dma_fifo_rw(void *opaque, uint8_t *bytes, unsigned int index,
 +                            size_t len, bool dir)
 +{
@@ -1727,17 +1763,24 @@ index de14f26..e69a617 100644
 +                    : cur + (uint32_t)chunk;
 +    }
 +    apu->regs[cur_reg] = cur;
-+    bool full_ep_fifo0_block = !dsp->is_gp && dir && index == 0 &&
-+        original_len == sizeof(apu->monitor.frame_buf);
-+    if (full_ep_fifo0_block && apu->trace_dsp_state)
++    bool ep_fifo0_output = !dsp->is_gp && dir && index == 0;
++    bool ep_frame_was_ready = dsp->ep_fifo_frame_ready;
++    if (ep_fifo0_output && apu->trace_dsp_state) {
 +        apu->dsp_trace_ep_fifo_writes++;
-+    if (full_ep_fifo0_block &&
-+        (apu->monitor.point == MCPX_APU_DEBUG_MON_EP ||
-+         apu->monitor.point == MCPX_APU_DEBUG_MON_GP_OR_EP)) {
-+        if (apu->trace_dsp_state) apu->dsp_trace_ep_fifo_captured++;
-+        memcpy(apu->monitor.frame_buf, original_bytes,
-+               sizeof(apu->monitor.frame_buf));
-+        apu->monitor.ep_fifo_frame_valid = true;
++        apu->dsp_trace_ep_fifo_bytes += original_len;
++    }
++    if (ep_fifo0_output) {
++        dsp_capture_ep_fifo_chunk(dsp, original_bytes, original_len);
++        if (!ep_frame_was_ready && dsp->ep_fifo_frame_ready) {
++            if (apu->trace_dsp_state)
++                apu->dsp_trace_ep_fifo_captured++;
++            if (apu->monitor.point == MCPX_APU_DEBUG_MON_EP ||
++                apu->monitor.point == MCPX_APU_DEBUG_MON_GP_OR_EP) {
++                memcpy(apu->monitor.frame_buf, dsp->ep_fifo_frame_buf,
++                       sizeof(apu->monitor.frame_buf));
++                apu->monitor.ep_fifo_frame_valid = true;
++            }
++        }
 +    }
 +    return true;
 +}
@@ -2103,7 +2146,7 @@ index de14f26..e69a617 100644
  /* ── DSP command doorbell acknowledgement ────────────────────────────────
   *
   * DirectSound does not stop at creating the device. It hands the audio DSP a
-@@ -103,7 +595,11 @@ static void dsp_ack_frame(MCPXAPUState *d)
+@@ -103,7 +631,11 @@ static void dsp_ack_frame(MCPXAPUState *d)
      if (!d->ram_ptr)
          return;
      for (i = 0; i < s_dsp_ack_count; i++) {
@@ -2116,7 +2159,7 @@ index de14f26..e69a617 100644
          if (*slot) {
              static int shown[APU_DSP_ACK_MAX];
              if (shown[i]++ < 3)
-@@ -114,21 +610,94 @@ static void dsp_ack_frame(MCPXAPUState *d)
+@@ -114,21 +646,98 @@ static void dsp_ack_frame(MCPXAPUState *d)
      }
  }
  
@@ -2210,12 +2253,16 @@ index de14f26..e69a617 100644
 +{
 +    if (!d) return;
 +    d->monitor.ep_fifo_frame_valid = false;
++    if (d->ep.dsp) {
++        d->ep.dsp->ep_fifo_frame_bytes_used = 0;
++        d->ep.dsp->ep_fifo_frame_ready = false;
++    }
 +    if (d->gp.dsp) dsp_reset_core(d->gp.dsp);
 +    if (d->ep.dsp) dsp_reset_core(d->ep.dsp);
  }
  
  void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
-@@ -141,30 +710,43 @@ void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
+@@ -141,30 +750,44 @@ void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
  void mcpx_apu_dsp_frame(MCPXAPUState *d,
                           float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME])
  {
@@ -2248,6 +2295,7 @@ index de14f26..e69a617 100644
 +                    float_to_24b(mixbins[b][i]);
 +            }
 +        }
++
 +        dsp_run_frame(d->gp.dsp, true);
 +        g_dbg.gp.cycles = d->gp.dsp->core.cycle_count;
 +    }
@@ -2276,7 +2324,7 @@ index de14f26..e69a617 100644
               *
               * Measured on Jet Set Radio Future, one 200 s gameplay run, with
               * a positive control moving beside it:
-@@ -213,6 +795,4 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d,
+@@ -213,6 +836,4 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d,
          }
      }
  
@@ -2650,7 +2698,7 @@ index dd6bec1..5718709 100644
  
  /* Stub address space - just passed to ldl_le_phys etc. (ignored) */
 diff --git a/src/apu/apu_state.h b/src/apu/apu_state.h
-index 651b334..f09f135 100644
+index 651b334..9ea3a92 100644
 --- a/src/apu/apu_state.h
 +++ b/src/apu/apu_state.h
 @@ -24,6 +24,8 @@
@@ -2662,7 +2710,7 @@ index 651b334..f09f135 100644
  
  /* ============================================================
   * DSP CPU registers
-@@ -105,36 +107,25 @@ typedef struct dsp_core_s {
+@@ -105,36 +107,28 @@ typedef struct dsp_core_s {
   * DSP DMA State (from dsp_dma.h)
   * ============================================================ */
  
@@ -2706,10 +2754,13 @@ index 651b334..f09f135 100644
 +    bool dma_fallback_logged;
 +    uint64_t trace_frame_count;
 +    uint32_t trace_events_logged;
++    int16_t ep_fifo_frame_buf[256][2];
++    size_t ep_fifo_frame_bytes_used;
++    bool ep_fifo_frame_ready;
      bool is_gp;
  } DSPState;
  
-@@ -373,6 +364,14 @@ typedef struct MCPXAPUVoiceFilter {
+@@ -373,6 +367,14 @@ typedef struct MCPXAPUVoiceFilter {
      uint16_t voice;
      float resample_buf[NUM_SAMPLES_PER_FRAME * 2];
      SRC_STATE *resampler;
@@ -2724,7 +2775,7 @@ index 651b334..f09f135 100644
      sv_filter svf[2];
      HrtfFilter hrtf;
  } MCPXAPUVoiceFilter;
-@@ -467,6 +466,13 @@ struct MCPXAPUState {
+@@ -467,6 +469,14 @@ struct MCPXAPUState {
  
      MemoryRegion *ram;
      uint8_t *ram_ptr;
@@ -2734,11 +2785,12 @@ index 651b334..f09f135 100644
 +    bool trace_dsp_state; /* Opt-in frame-boundary DSP state samples. */
 +    unsigned int dsp_boot_trace_events[2]; /* Protected by the device mutex. */
 +    uint64_t dsp_trace_audio_blocks, dsp_trace_ep_fifo_writes;
++    uint64_t dsp_trace_ep_fifo_bytes;
 +    uint64_t dsp_trace_ep_fifo_captured;
      MemoryRegion mmio;
  
      MCPXAPUVPState vp;
-@@ -498,6 +504,7 @@ struct MCPXAPUState {
+@@ -498,6 +508,7 @@ struct MCPXAPUState {
      struct {
          McpxApuDebugMonitorPoint point;
          int16_t frame_buf[256][2];
@@ -2746,7 +2798,7 @@ index 651b334..f09f135 100644
          void *stream; /* SDL_AudioStream* - stubbed */
          int queued_bytes_low, queued_bytes_high;
      } monitor;
-@@ -513,11 +520,24 @@ void mcpx_apu_vp_finalize(MCPXAPUState *d);
+@@ -513,11 +524,24 @@ void mcpx_apu_vp_finalize(MCPXAPUState *d);
  void mcpx_apu_vp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME]);
  void mcpx_apu_vp_reset(MCPXAPUState *d);
  
@@ -3291,7 +3343,7 @@ index caef326..161c0eb 100644
  target_include_directories(xbox_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 diff --git a/src/input/pc_input.c b/src/input/pc_input.c
 new file mode 100644
-index 0000000..84ac6f906d53e06b48cdb4ffefde40f8bb247fa3
+index 0000000..84ac6f9
 --- /dev/null
 +++ b/src/input/pc_input.c
 @@ -0,0 +1,1321 @@
@@ -4618,7 +4670,7 @@ index 0000000..84ac6f906d53e06b48cdb4ffefde40f8bb247fa3
 +void pc_input_test_set_layout_labels(int layout_aware) { s_layout_labels = layout_aware; }
 diff --git a/src/input/pc_input.h b/src/input/pc_input.h
 new file mode 100644
-index 0000000..70ead0cbcedc8083c044c62260f8f1ae9a621025
+index 0000000..70ead0c
 --- /dev/null
 +++ b/src/input/pc_input.h
 @@ -0,0 +1,206 @@
@@ -41319,10 +41371,10 @@ index 0000000..e96889b
 +}
 diff --git a/tests/apu_dsp_core/test_main.c b/tests/apu_dsp_core/test_main.c
 new file mode 100644
-index 0000000..bd8e079
+index 0000000..ccd2542
 --- /dev/null
 +++ b/tests/apu_dsp_core/test_main.c
-@@ -0,0 +1,488 @@
+@@ -0,0 +1,591 @@
 +#include "apu_dsp_engine.h"
 +#include "apu_state.h"
 +#include "apu_dma_regs.h"
@@ -41761,6 +41813,104 @@ index 0000000..bd8e079
 +    return result;
 +}
 +
++static int write_ep_fifo_test_chunk(DSPState *ep, unsigned chunk)
++{
++    uint32_t descriptor[7] = {
++        NODE_POINTER_EOL,
++        (1u << 1) | (2u << 10) | (1u << 14),
++        32,
++        0x100 + chunk * 32,
++        0,
++        0,
++        0xFFF
++    };
++    memcpy(ep->core.xram, descriptor, sizeof(descriptor));
++    for (unsigned i = 0; i < 32; ++i)
++        ep->core.xram[0x100 + chunk * 32 + i] =
++            (0x10000u + chunk * 32 + i) & 0x00FFFFFFu;
++    dsp_dma_write(&ep->dma, DMA_NEXT_BLOCK, 0);
++    dsp_dma_write(&ep->dma, DMA_CONTROL, DMA_CONTROL_ACTION_START);
++    if (ep->dma.error) return 1;
++    dsp_dma_completion_seen(&ep->dma);
++    return 0;
++}
++
++static int check_ep_fifo_partial_blocks_are_assembled(void)
++{
++    MCPXAPUState *apu = (MCPXAPUState *)calloc(1, sizeof(*apu));
++    DSPState *ep;
++    uint32_t page = 0x2000;
++    int result = 0;
++
++    if (!apu) return 1;
++    apu->ram_size = 0x4000;
++    apu->ram_ptr = (uint8_t *)calloc(1, apu->ram_size);
++    if (!apu->ram_ptr) { free(apu); return 2; }
++    mcpx_apu_dsp_init(apu);
++    ep = apu->ep.dsp;
++    if (!ep || !ep->engine_ready) { result = 3; goto done; }
++    apu->trace_dsp_state = true;
++    apu->monitor.point = MCPX_APU_DEBUG_MON_EP;
++
++    apu->regs[NV_PAPU_EPFADDR] = 0x100;
++    apu->regs[NV_PAPU_EPFMAXSGE] = 0;
++    apu->regs[NV_PAPU_EPOFBASE0] = 0;
++    apu->regs[NV_PAPU_EPOFEND0] = 0x1000;
++    apu->regs[NV_PAPU_EPOFCUR0] = 0;
++    memcpy(apu->ram_ptr + 0x100, &page, sizeof(page));
++
++    for (unsigned chunk = 0; chunk < 7; ++chunk) {
++        if (write_ep_fifo_test_chunk(ep, chunk)) { result = 4; goto done; }
++    }
++    if (ep->ep_fifo_frame_ready) { result = 5; goto done; }
++    apu->ep_frame_div = 7;
++    mcpx_apu_monitor_frame(apu);
++    if (ep->ep_fifo_frame_bytes_used != 0) { result = 6; goto done; }
++
++    for (unsigned chunk = 7; chunk < 15; ++chunk) {
++        if (write_ep_fifo_test_chunk(ep, chunk)) { result = 7; goto done; }
++    }
++    if (!ep->ep_fifo_frame_ready || !apu->monitor.ep_fifo_frame_valid) {
++        result = 8;
++        goto done;
++    }
++    if (memcmp(apu->monitor.frame_buf, apu->ram_ptr + 0x2000 + 7 * 128,
++               sizeof(apu->monitor.frame_buf)) != 0) {
++        const int16_t *ram_output = (const int16_t *)(apu->ram_ptr + 0x2000 + 7 * 128);
++        fprintf(stderr, "EP fragment mismatch: frame=%d,%d captured=%d,%d RAM=%d,%d cur=%u used=%zu\n",
++                apu->monitor.frame_buf[0][0], apu->monitor.frame_buf[0][1],
++                ep->ep_fifo_frame_buf[0][0], ep->ep_fifo_frame_buf[0][1],
++                ram_output[0], ram_output[1], apu->regs[NV_PAPU_EPOFCUR0],
++                ep->ep_fifo_frame_bytes_used);
++        result = 9;
++        goto done;
++    }
++    apu->ep_frame_div = 7;
++    mcpx_apu_monitor_frame(apu);
++    if (ep->ep_fifo_frame_ready || apu->monitor.ep_fifo_frame_valid) {
++        result = 10;
++        goto done;
++    }
++
++    for (unsigned chunk = 15; chunk < 22; ++chunk) {
++        if (write_ep_fifo_test_chunk(ep, chunk)) { result = 11; goto done; }
++    }
++    apu->ep_frame_div = 7;
++    mcpx_apu_monitor_frame(apu);
++    if (ep->ep_fifo_frame_ready || ep->ep_fifo_frame_bytes_used != 0)
++        result = 12;
++    if (apu->dsp_trace_ep_fifo_writes != 22 ||
++        apu->dsp_trace_ep_fifo_bytes != 22 * 128 ||
++        apu->dsp_trace_ep_fifo_captured != 1)
++        result = 13;
++
++done:
++    mcpx_apu_dsp_finalize(apu);
++    free(apu->ram_ptr);
++    free(apu);
++    return result;
++}
++
 +int main(void)
 +{
 +    int result = check_dsp_trace_event_flags();
@@ -41807,6 +41957,11 @@ index 0000000..bd8e079
 +    if (result) {
 +        fprintf(stderr, "EP FIFO output ownership test failed (%d)\n", result);
 +        return result + 70;
++    }
++    result = check_ep_fifo_partial_blocks_are_assembled();
++    if (result) {
++        fprintf(stderr, "EP FIFO partial assembly test failed (%d)\n", result);
++        return result + 80;
 +    }
 +    puts("DSP core C API tests passed");
 +    return 0;
