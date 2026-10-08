@@ -80,7 +80,10 @@ extern ptrdiff_t g_xbox_mem_offset;
 
 /*
  * TODO: Set these from your xbe_parser output.
- * Run: py -3 -m tools.xbe_parser game/default.xbe
+ * Run from the project root in PowerShell:
+ *   Push-Location third_party/xboxrecomp
+ *   & ..\..\.venv\Scripts\python.exe -m tools.xbe_parser ..\..\game\default.xbe --json ..\..\.work\xbe-analysis-check.json
+ *   Pop-Location
  */
 #define YOUR_GAME_ENTRY_POINT   0x00025A3F  /* XBE entry point VA */
 #define YOUR_GAME_XBE_PATH      "game\\default.xbe"

@@ -702,16 +702,14 @@ static void black_ao_camera_publish(uint32_t camera)
 }
 /* END BLACK_AO_CAMERA */
 
-/* The first-person arms and weapon go through the world camera. The models only exist for the original 4:3 frame (the
- * artists left out what that frame cut off), so a custom FOV, which shows more of them and smaller, tears them open. The
- * GPU renderer scales those draws back to the original field of view about the screen centre; the factor is how much
- * wider the world's view window became. The viewmodel's vertex program (463DBDF0, the arms and weapon of every level, two
- * draws a frame) is what marks the draws. RECOMP_BLACK_VIEWMODEL=0 leaves them with the world's FOV;
- * RECOMP_BLACK_VM_VS=hash,hash adds vertex programs. */
+/* Keep first-person parts on the same world-camera projection. Scaling only a
+ * vertex-program hash can pull a weapon mesh away from a separately drawn
+ * attachment (such as its suppressor). Optional per-draw compensation remains
+ * available for explicitly identified programs via RECOMP_BLACK_VM_VS. */
 static void black_viewmodel_scale(uint32_t original_window_bits, uint32_t wide_window_bits)
 {
-    static uint32_t hashes[8] = { 0x463DBDF0u };
-    static int count = 1, init;
+    static uint32_t hashes[8];
+    static int count, init;
     static float last = -1.0f;
     float original, wide, scale;
     if (!init) {

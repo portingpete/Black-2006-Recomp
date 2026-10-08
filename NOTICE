@@ -20,6 +20,11 @@ header includes Mesa's Brian Paul/VMware permissive notice, copied verbatim
 without C comment prefixes into LICENSES/Mesa.txt. These notices remain in
 the corresponding upstream files and patch additions.
 
+The DSP56300 JIT is fetched at the v1.0.0 tag from
+https://github.com/mborgerson/dsp56300 and is MIT licensed. Its license is
+preserved in LICENSES/dsp56300-MIT.txt; scripts/setup.ps1 pins commit
+aab3649fc452daf03da8b5e36fdc0c308d874101.
+
 BLACK and its retail game data are the property of their respective owners.
 No permission to distribute game files is granted by these software licenses.
 The generator requires a user's own matching retail original Xbox files.

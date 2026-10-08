@@ -43,6 +43,7 @@ Requirements:
 - Windows x64, an AVX2-capable CPU, and a Direct3D 11 graphics device.
 - Visual Studio 2022 with **Desktop development with C++** and a Windows SDK.
 - Git, CMake 3.20 or newer, and Python 3.10 or newer (`py -3`).
+- Rustup with the `x86_64-pc-windows-msvc` toolchain (the pinned DSP build uses Rust 1.98.1).
 - The supported retail original Xbox release of BLACK, extracted into `game/`.
 
 The supported `game/default.xbe` has SHA-256:
@@ -62,9 +63,9 @@ From PowerShell in this repository:
 .\'BLACK PC Launcher.exe'
 ```
 
-Setup fetches a pinned XboxRecomp revision, applies the included runtime patch,
-creates a local Python environment, generates code from your XBE, and builds
-the game and launcher. These dependencies and outputs stay outside Git.
+Setup fetches pinned XboxRecomp and DSP56300 revisions, applies the included
+runtime patch, creates a local Python environment, generates code from your XBE,
+and builds the game and launcher. These dependencies and outputs stay outside Git.
 Building the generated C code can take several minutes.
 
 Use the launcher to configure controls and video settings, then choose **Play**.

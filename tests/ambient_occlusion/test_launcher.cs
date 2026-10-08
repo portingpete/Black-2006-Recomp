@@ -44,6 +44,38 @@ namespace BlackXboxLauncher
                 Directory.CreateDirectory(fixture);
                 var defaults = new LaunchOptions();
                 Check(defaults.AoMethod == "off" && defaults.AoQuality == "high", "AO defaults are Off and High.");
+                Check(!defaults.VisualTraceEnabled && defaults.VisualTraceFrames == "120-240/30", "Visual tracing defaults to Off with a documented frame pattern.");
+                Check(!defaults.DspTraceEnabled, "DSP state tracing defaults to Off.");
+                Check(defaults.KgpuDrawLogFrames == "", "GPU draw tracing defaults to Off.");
+                Check(KgpuDrawFrames.Normalize(" 001740,002 ") == "1740,2" && KgpuDrawFrames.Normalize("42") == "42",
+                    "GPU draw frame intervals normalize and accept one frame.");
+                foreach (string invalidDrawFrames in new[] { "0", "1,0", "1,121", "1-4", "1,2,3", "x,2", "2147483648" })
+                    try { KgpuDrawFrames.Normalize(invalidDrawFrames); throw new Exception("Accepted invalid KGPU draw interval: " + invalidDrawFrames); }
+                    catch (ArgumentException error) { Check(error.Message.Contains("frame"), "Clear GPU draw interval validation: " + invalidDrawFrames); }
+                try { new LaunchOptions { GpuRenderer = false, KgpuDrawLogFrames = "120,2" }.Validate(); throw new Exception("Accepted KGPU tracing with CPU Kelvin."); }
+                catch (InvalidOperationException error) { Check(error.Message.Contains("GPU renderer"), "GPU draw trace explains its renderer requirement."); }
+                var drawSettings = LaunchOptions.FromSettingsJson("{\"KgpuDrawLogFrames\":\"120,2\"}");
+                Check(drawSettings.KgpuDrawLogFrames == "120,2", "GPU draw log interval persists.");
+                Check(LaunchOptions.FromSettingsJson("{\"KgpuDrawLogFrames\":\"bad\"}").KgpuDrawLogFrames == "",
+                    "Malformed persisted GPU draw interval defaults Off.");
+                Check(VisualTraceFrames.Normalize(" 00120-00240/030 ") == "120-240/30", "Visual trace intervals normalize decimal values.");
+                Check(VisualTraceFrames.Normalize("120") == "120" && VisualTraceFrames.Normalize("120-180") == "120-180", "Single frames and ranges are accepted.");
+                foreach (string invalidTrace in new[] { "", "0", "120-0", "180-120", "120/2", "120-180/0", "120-180/2/3", "0x10", "1-9223372036854775808" })
+                    try { VisualTraceFrames.Normalize(invalidTrace); throw new Exception("Accepted invalid visual trace interval: " + invalidTrace); }
+                    catch (ArgumentException error) { Check(error.Message.Contains("frame"), "Clear visual trace validation: " + invalidTrace); }
+                Invalid(new LaunchOptions { GpuRenderer = false, VisualTraceEnabled = true, VisualTraceFrames = "bad" }, "frame");
+                try { new LaunchOptions { VisualTraceEnabled = true, GpuRenderer = true }.Validate(); throw new Exception("Accepted detailed tracing with the GPU renderer."); }
+                catch (InvalidOperationException error) { Check(error.Message.Contains("CPU Kelvin"), "Detailed tracing explains its CPU renderer requirement."); }
+                var traceSettings = LaunchOptions.FromSettingsJson("{\"VisualTraceEnabled\":true,\"VisualTraceFrames\":\"120-180/30\"}");
+                Check(traceSettings.VisualTraceEnabled && traceSettings.VisualTraceFrames == "120-180/30", "Visual trace settings persist.");
+                var malformedTraceSettings = LaunchOptions.FromSettingsJson("{\"VisualTraceEnabled\":true,\"VisualTraceFrames\":\"bad\"}");
+                Check(malformedTraceSettings.VisualTraceEnabled && malformedTraceSettings.VisualTraceFrames == defaults.VisualTraceFrames, "Malformed persisted intervals are repaired.");
+                Check(!LaunchOptions.FromSettingsJson("{} ").VisualTraceEnabled, "Older launcher settings keep tracing disabled.");
+                Check(LaunchOptions.FromSettingsJson("{\"DspTraceEnabled\":true}").DspTraceEnabled,
+                    "DSP trace setting persists without a schema migration.");
+                var malformedDspTraceSettings = LaunchOptions.FromSettingsJson("{\"DspTraceEnabled\":\"yes\",\"Threads\":7}");
+                Check(!malformedDspTraceSettings.DspTraceEnabled && malformedDspTraceSettings.Threads == 7,
+                    "Malformed DSP trace settings default Off without dropping other options.");
                 foreach (string method in new[] { "off", "ssao", "hbao", "hbao_plus", "gtao" })
                     foreach (string quality in new[] { "low", "medium", "high", "ultra" })
                     {
@@ -88,11 +120,91 @@ namespace BlackXboxLauncher
                 Check(process.EnvironmentVariables["RECOMP_VIDEO_INI"] == LaunchOptions.VideoIniPath(fixture), "Launcher uses the shared video.ini.");
                 Check(!process.EnvironmentVariables.ContainsKey("RECOMP_AO_METHOD") && !process.EnvironmentVariables.ContainsKey("RECOMP_AO_QUALITY"),
                     "Launcher choices remain editable from the in-game Video Settings page.");
+                Environment.SetEnvironmentVariable("RECOMP_KELVIN_TRACE", "999");
+                var normalTraceProcess = GameSession.CreateStartInfo(fixture, new LaunchOptions());
+                Check(!normalTraceProcess.EnvironmentVariables.ContainsKey("RECOMP_KELVIN_TRACE") && !normalTraceProcess.EnvironmentVariables.ContainsKey("RECOMP_KELVIN_TRACE_TEX"), "Tracing stays absent by default despite inherited variables.");
+                Environment.SetEnvironmentVariable("RECOMP_KGPU_DRAWLOG", "9,2");
+                normalTraceProcess = GameSession.CreateStartInfo(fixture, new LaunchOptions());
+                Check(!normalTraceProcess.EnvironmentVariables.ContainsKey("RECOMP_KGPU_DRAWLOG"), "Inherited KGPU draw tracing is scrubbed when disabled.");
+                var enabledDrawLogProcess = GameSession.CreateStartInfo(fixture, new LaunchOptions { KgpuDrawLogFrames = "00120,02" });
+                Check(enabledDrawLogProcess.EnvironmentVariables["RECOMP_KGPU_DRAWLOG"] == "120,2", "Enabled KGPU draw interval reaches the runtime normalized.");
+                Environment.SetEnvironmentVariable("RECOMP_KGPU_DRAWLOG", null);
+                Check(!normalTraceProcess.EnvironmentVariables.ContainsKey("RECOMP_APU_TRACE_DSP_STATE"), "DSP state tracing stays absent by default.");
+                Environment.SetEnvironmentVariable("RECOMP_APU_TRACE_DSP_STATE", "1");
+                normalTraceProcess = GameSession.CreateStartInfo(fixture, new LaunchOptions());
+                Check(!normalTraceProcess.EnvironmentVariables.ContainsKey("RECOMP_APU_TRACE_DSP_STATE"), "Inherited DSP tracing is scrubbed when disabled.");
+                var enabledDspTraceProcess = GameSession.CreateStartInfo(fixture, new LaunchOptions { DspTraceEnabled = true });
+                Check(enabledDspTraceProcess.EnvironmentVariables["RECOMP_APU_TRACE_DSP_STATE"] == "1", "Enabled DSP tracing reaches the runtime.");
+                Environment.SetEnvironmentVariable("RECOMP_APU_TRACE_DSP_STATE", null);
+                var enabledTraceProcess = GameSession.CreateStartInfo(fixture, new LaunchOptions { GpuRenderer = false, VisualTraceEnabled = true, VisualTraceFrames = "00120-00240/030" });
+                Check(enabledTraceProcess.EnvironmentVariables["RECOMP_KELVIN_TRACE"] == "120-240/30" && !enabledTraceProcess.EnvironmentVariables.ContainsKey("RECOMP_KELVIN_TRACE_TEX"), "Enabled trace exports only the normalized interval.");
+                Environment.SetEnvironmentVariable("RECOMP_KELVIN_TRACE", null);
+                using (var traceLog = new VisualTraceLog(Path.Combine(fixture, "visual-trace.log"), 128))
+                {
+                    for (int i = 0; i < 20; i++) traceLog.WriteLine("[KTRACE] " + new string('x', 30));
+                    traceLog.Complete();
+                    traceLog.Dispose();
+                    string bounded = File.ReadAllText(Path.Combine(fixture, "visual-trace.log"));
+                    Check(new FileInfo(Path.Combine(fixture, "visual-trace.log")).Length <= 128, "Visual trace log respects its configured byte cap.");
+                    Check(bounded.Contains("TRUNCATED") && bounded.Contains("lines discarded"), "Capped trace log reports truncation and discarded line count.");
+                }
+                using (var dspTraceLog = new VisualTraceLog(Path.Combine(fixture, "audio-dsp-trace.log"), 128, "[DSPTRACE]"))
+                {
+                    for (int i = 0; i < 20; i++) dspTraceLog.WriteLine("[DSPTRACE] " + new string('x', 30));
+                    dspTraceLog.Dispose();
+                    string bounded = File.ReadAllText(Path.Combine(fixture, "audio-dsp-trace.log"));
+                    Check(new FileInfo(Path.Combine(fixture, "audio-dsp-trace.log")).Length <= 128, "DSP trace log respects its configured byte cap.");
+                    Check(bounded.Contains("[DSPTRACE] TRUNCATED:") && bounded.Contains("lines discarded"), "DSP trace truncation is identified with discarded line count.");
+                }
+                using (var gpuTraceLog = new VisualTraceLog(Path.Combine(fixture, "kgpu-draw-trace.log"), 128, "[KDL]"))
+                {
+                    for (int i = 0; i < 20; i++) gpuTraceLog.WriteLine("[KDL] " + new string('x', 30));
+                    gpuTraceLog.Dispose();
+                    string bounded = File.ReadAllText(Path.Combine(fixture, "kgpu-draw-trace.log"));
+                    Check(new FileInfo(Path.Combine(fixture, "kgpu-draw-trace.log")).Length <= 128, "GPU draw trace respects its configured byte cap.");
+                    Check(bounded.Contains("[KDL] TRUNCATED:") && bounded.Contains("lines discarded"), "GPU draw trace truncation reports discarded lines.");
+                }
+                string routeDir = Path.Combine(fixture, "routing"); Directory.CreateDirectory(routeDir);
+                using (var route = new GameSession())
+                {
+                    var sessionLog = new StreamWriter(Path.Combine(routeDir, "session.log"), false, new System.Text.UTF8Encoding(false));
+                    var visualLog = new VisualTraceLog(Path.Combine(routeDir, "visual-trace.log"));
+                    var dspLog = new VisualTraceLog(Path.Combine(routeDir, "audio-dsp-trace.log"), VisualTraceLog.DefaultLimit, "[DSPTRACE]");
+                    var gpuDrawLog = new VisualTraceLog(Path.Combine(routeDir, "kgpu-draw-trace.log"), VisualTraceLog.DefaultLimit, "[KDL]");
+                    typeof(GameSession).GetField("log", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(route, sessionLog);
+                    typeof(GameSession).GetField("visualTraceLog", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(route, visualLog);
+                    typeof(GameSession).GetField("dspTraceLog", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(route, dspLog);
+                    typeof(GameSession).GetField("kgpuDrawTraceLog", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(route, gpuDrawLog);
+                    route.WriteOutput("[KTRACE] draw details", false); route.WriteOutput("[DSPTRACE] core=GP event=SEN", false); route.WriteOutput("[KDL] f120 #1 draw vs 463DBDF0", false); route.WriteOutput("ordinary output", false); route.WriteOutput("ordinary error", true);
+                    route.Dispose();
+                    Check(File.ReadAllText(Path.Combine(routeDir, "session.log")) == "ordinary output" + Environment.NewLine + "[stderr] ordinary error" + Environment.NewLine,
+                        "KTRACE lines are not duplicated in session.log.");
+                    Check(File.ReadAllText(Path.Combine(routeDir, "visual-trace.log")) == "[KTRACE] draw details" + Environment.NewLine,
+                        "KTRACE lines are routed to the separate log.");
+                    Check(File.ReadAllText(Path.Combine(routeDir, "audio-dsp-trace.log")) == "[DSPTRACE] core=GP event=SEN" + Environment.NewLine,
+                        "DSP state trace is routed separately from session.log.");
+                    Check(File.ReadAllText(Path.Combine(routeDir, "kgpu-draw-trace.log")) == "[KDL] f120 #1 draw vs 463DBDF0" + Environment.NewLine,
+                        "KGPU draw trace is routed separately from session.log.");
+                }
 
                 string project = Path.Combine(fixture, "AO UI");
                 Directory.CreateDirectory(Path.Combine(project, "local"));
                 using (var form = new LauncherForm(project, true))
                 {
+                    var traceToggle = Find(form, "Detailed visual trace") as CheckBox;
+                    var dspTraceToggle = Find(form, "Detailed DSP state trace (GP/EP stack)") as CheckBox;
+                    var gpuDrawFrames = Find(form, "GPU draw log frames") as TextBox;
+                    var traceFrames = Find(form, "Visual trace frames") as TextBox;
+                    Check(traceToggle != null && traceFrames != null && !traceToggle.Checked && !traceFrames.Enabled,
+                        "Game settings expose visual tracing disabled by default.");
+                    traceToggle.Checked = true; traceFrames.Text = "120-240/30";
+                    Check(traceFrames.Enabled && Options(form).VisualTraceEnabled && Options(form).VisualTraceFrames == "120-240/30",
+                        "Visual trace UI interval reaches the launch settings.");
+                    Check(dspTraceToggle != null && !dspTraceToggle.Checked, "DSP trace UI is visible and disabled by default.");
+                    Check(gpuDrawFrames != null && gpuDrawFrames.Text == "", "GPU draw log UI is empty and disabled by default.");
+                    if (gpuDrawFrames != null) { gpuDrawFrames.Text = "120,2"; Check(Options(form).KgpuDrawLogFrames == "120,2", "GPU draw interval UI reaches launch settings."); }
+                    dspTraceToggle.Checked = true;
+                    Check(Options(form).DspTraceEnabled, "DSP trace UI reaches launch settings.");
                     var method = Find(form, "Ambient occlusion method") as ComboBox;
                     var quality = Find(form, "Ambient occlusion quality") as ComboBox;
                     Check(method != null && quality != null && method.Items.Count == 5 && quality.Items.Count == 4, "All English AO options are exposed.");
@@ -110,7 +222,7 @@ namespace BlackXboxLauncher
                     Check(tip.GetToolTip(quality).Contains("sampling density and radius") && tip.GetToolTip(quality).Contains("scene resolution"),
                         "Quality help describes actual sampling behavior.");
                 }
-                Console.WriteLine("PASS: " + checks + " actual-launcher AO checks.");
+                Console.WriteLine("PASS: " + checks + " actual-launcher checks.");
                 return 0;
             }
             catch (Exception error) { Console.Error.WriteLine("FAIL: " + error); return 1; }

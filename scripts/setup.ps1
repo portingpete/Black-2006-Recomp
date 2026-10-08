@@ -6,7 +6,9 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $toolkit = Join-Path $projectRoot 'third_party\xboxrecomp'
 $patch = Join-Path $projectRoot 'patches\xboxrecomp.patch'
 $python = Join-Path $projectRoot '.venv\Scripts\python.exe'
+$dsp56300 = Join-Path $projectRoot '.work\err009-dsp56300'
 $upstreamCommit = '766ecefcd7fb2a9b344de8ec891f6fe9ea14261b'
+$dsp56300Commit = 'aab3649fc452daf03da8b5e36fdc0c308d874101'
 $xbe = Join-Path $projectRoot 'game\default.xbe'
 $expectedXbe = 'DF2739C372D254A90AEECCF5971D12097F22D89FBB90DB021FDA96DD4DEB68F6'
 
@@ -57,6 +59,19 @@ if (Test-Patch) {
     Invoke-Checked git @('-C', $toolkit, 'apply', $patch)
 } else {
     if (-not (Test-Patch -Reverse)) { throw 'Runtime patch conflicts with this dependency checkout; preserve local edits before retrying.' }
+}
+
+if (-not (Test-Path -LiteralPath $dsp56300)) {
+    $null = New-Item -ItemType Directory -Path (Split-Path -Parent $dsp56300) -Force
+    Invoke-Checked git @('clone', '--depth', '1', '--branch', 'v1.0.0', 'https://github.com/mborgerson/dsp56300.git', $dsp56300)
+}
+$actualDspCommit = (& git -C $dsp56300 rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $actualDspCommit -ne $dsp56300Commit) {
+    throw 'The DSP56300 dependency must be at the pinned v1.0.0 commit. Preserve another checkout separately before retrying.'
+}
+if (-not (Get-Command cargo -ErrorAction SilentlyContinue) -or
+    -not (Get-Command rustup -ErrorAction SilentlyContinue)) {
+    throw 'Rustup and Cargo are required to build the DSP core. Install the x86_64-pc-windows-msvc toolchain and rerun setup.'
 }
 
 if (-not (Test-Path -LiteralPath $python)) {
