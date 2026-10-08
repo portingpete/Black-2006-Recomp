@@ -75,7 +75,7 @@ index f2a4948..ff68d2d 100644
  -----------------------------------
  
 diff --git a/src/apu/CMakeLists.txt b/src/apu/CMakeLists.txt
-index 0bd4ebd..67fcf9b 100644
+index 0bd4ebd..698cb3e 100644
 --- a/src/apu/CMakeLists.txt
 +++ b/src/apu/CMakeLists.txt
 @@ -2,19 +2,73 @@
@@ -146,7 +146,7 @@ index 0bd4ebd..67fcf9b 100644
 +)
 +add_custom_target(dsp56300_ffi_build DEPENDS "${DSP56300_LIBRARY}")
 +add_dependencies(xbox_apu dsp56300_ffi_build)
-+target_include_directories(xbox_apu PRIVATE
++target_include_directories(xbox_apu PUBLIC
 +    "${DSP56300_SOURCE_DIR}/crates/emu-ffi/include"
 +)
 +target_link_libraries(xbox_apu PRIVATE "${DSP56300_LIBRARY}")
@@ -166,7 +166,7 @@ index 0bd4ebd..67fcf9b 100644
      # Linux: platform layer (Win32 primitives on POSIX) + SDL2 audio + libm
      find_package(SDL2 REQUIRED)
 diff --git a/src/apu/README.md b/src/apu/README.md
-index 04c6b06..42b32bf 100644
+index 04c6b06..1d013fe 100644
 --- a/src/apu/README.md
 +++ b/src/apu/README.md
 @@ -3,8 +3,8 @@
@@ -175,22 +175,23 @@ index 04c6b06..42b32bf 100644
  - **VP (Voice Processor)** — 256 hardware voices, ADPCM/PCM decode, pitch shifting, envelopes, HRTF 3D audio
 -- **GP (Global Processor)** — DSP for global effects (reverb, chorus). Currently **stubbed** — effects bypass.
 -- **EP (Encode Processor)** — DSP for AC3/DTS encoding. Currently **stubbed** — passthrough.
-+- **GP (Global Processor)** — loaded DSP56300 programs execute with separate X/Y/P memory and timer/frame peripherals. Xbox DMA is not implemented yet.
-+- **EP (Encode Processor)** — loaded DSP56300 programs execute, but FIFO/DMA output routing remains incomplete.
++- **GP (Global Processor)** — loaded DSP56300 programs execute with separate X/Y/P memory, timer/frame peripherals, and scratch/FIFO DMA.
++- **EP (Encode Processor)** — loaded DSP56300 programs execute with DMA and PCM FIFO output capture. Direct mixdown remains a fallback; full in-game audio fidelity is not yet verified.
  
  Audio output uses Windows `waveOut` at 48kHz stereo 16-bit.
  
-@@ -17,7 +17,8 @@ Audio output uses Windows `waveOut` at 48kHz stereo 16-bit.
+@@ -17,7 +17,9 @@ Audio output uses Windows `waveOut` at 48kHz stereo 16-bit.
  | `apu_regs.h` | 366 | MCPX APU register definitions and field masks |
  | `apu_core.c` | 762 | MMIO handlers, frame thread, waveOut output, test tone |
  | `apu_vp.c` | 1,247 | Voice Processor — decode, resample, mix, envelopes, HRTF |
 -| `apu_dsp.c` | 90 | GP/EP stubs (mixbin 0/1 passthrough) |
 +| `apu_dsp.c` | — | GP/EP boot, frame execution, MMIO, and temporary direct-mixdown fallback |
 +| `apu_dsp_engine.c` | — | C adapter for the pinned DSP56300 JIT |
++| `apu_dma.c` | — | DSP descriptor chains, scratch transfers, and FIFO transfers |
  | `apu_mmio_hook.c` | 253 | VEH x86-64 instruction decoder for 0xFE800000+ MMIO |
  | `apu_shim.h` | 431 | QEMU compatibility (threads, atomics, clocks → Win32) |
  | `apu_debug.h` | 104 | Debug logging macros |
-@@ -77,9 +78,9 @@ mcpx_apu_shutdown(apu);
+@@ -77,9 +79,9 @@ mcpx_apu_shutdown(apu);
           ▼           ▼           ▼
     ┌──────────┐ ┌─────────┐ ┌─────────┐
     │    VP    │ │   GP    │ │   EP    │
@@ -198,8 +199,8 @@ index 04c6b06..42b32bf 100644
 -   │ ADPCM/  │ │  effects│ │  encode │
 -   │  PCM    │ │  bypass │ │  bypass │
 +   │256 voices│ │ DSP56300│ │ DSP56300│
-+   │ ADPCM/  │ │  no DMA │ │ no FIFO │
-+   │  PCM    │ │  yet    │ │ routing│
++   │ ADPCM/  │ │   DMA   │ │   DMA   │
++   │  PCM    │ │         │ │PCM FIFO │
     └────┬─────┘ └────┬────┘ └────┬────┘
          │             │           │
          └──────┬──────┘───────────┘
@@ -247,7 +248,7 @@ index f7b9f8f..06754f2 100644
  uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size);
  
 diff --git a/src/apu/apu_core.c b/src/apu/apu_core.c
-index 459be77..47010b6 100644
+index 459be77..7257a1f 100644
 --- a/src/apu/apu_core.c
 +++ b/src/apu/apu_core.c
 @@ -21,6 +21,7 @@
@@ -365,7 +366,7 @@ index 459be77..47010b6 100644
  }
  
  /* ============================================================
-@@ -203,10 +255,17 @@ typedef struct {
+@@ -203,10 +255,18 @@ typedef struct {
  
  static WaveOutState g_waveout = { 0 };
  
@@ -379,11 +380,12 @@ index 459be77..47010b6 100644
  {
      (void)errp;
      d->monitor.stream = NULL;
++    d->monitor.ep_fifo_frame_valid = false;
 +    memset(&g_monitor_packet, 0, sizeof(g_monitor_packet));
      d->monitor.queued_bytes_low = 1024;
      d->monitor.queued_bytes_high = 3072;
  
-@@ -252,6 +311,7 @@ void mcpx_apu_monitor_init(MCPXAPUState *d, Error **errp)
+@@ -252,6 +312,7 @@ void mcpx_apu_monitor_init(MCPXAPUState *d, Error **errp)
  void mcpx_apu_monitor_finalize(MCPXAPUState *d)
  {
      (void)d;
@@ -391,7 +393,7 @@ index 459be77..47010b6 100644
      if (xa2_is_active()) {
          xa2_shutdown();
          return;
-@@ -270,96 +330,88 @@ void mcpx_apu_monitor_finalize(MCPXAPUState *d)
+@@ -270,96 +331,89 @@ void mcpx_apu_monitor_finalize(MCPXAPUState *d)
  
  void mcpx_apu_monitor_frame(MCPXAPUState *d)
  {
@@ -399,6 +401,7 @@ index 459be77..47010b6 100644
 -        return;
 -    }
 +    if ((d->ep_frame_div + 1) % 8) return;
++    d->monitor.ep_fifo_frame_valid = false;
  
 -    /* XAudio2 path: render and submit a buffer */
 -    if (xa2_is_active()) {
@@ -559,7 +562,7 @@ index 459be77..47010b6 100644
  }
  
  /* ============================================================
-@@ -432,6 +484,21 @@ static void se_frame(MCPXAPUState *d)
+@@ -432,6 +486,21 @@ static void se_frame(MCPXAPUState *d)
   * APU frame thread (background processing)
   * ============================================================ */
  
@@ -581,7 +584,7 @@ index 459be77..47010b6 100644
  static void *mcpx_apu_frame_thread(void *arg)
  {
      MCPXAPUState *d = MCPX_APU_DEVICE(arg);
-@@ -446,6 +513,25 @@ static void *mcpx_apu_frame_thread(void *arg)
+@@ -446,6 +515,25 @@ static void *mcpx_apu_frame_thread(void *arg)
              continue;
          }
  
@@ -607,7 +610,7 @@ index 459be77..47010b6 100644
          /* Always run the audio output loop — the software mixer and test tone
           * need continuous frame delivery regardless of APU register state.
           * The VP/DSP pipeline (se_frame) only runs when registers allow it. */
-@@ -460,8 +546,15 @@ static void *mcpx_apu_frame_thread(void *arg)
+@@ -460,8 +548,16 @@ static void *mcpx_apu_frame_thread(void *arg)
  
          if (apu_active && !g_test_tone.active) {
              /* Full pipeline: VP voices → DSP → monitor → waveOut */
@@ -618,12 +621,13 @@ index 459be77..47010b6 100644
 +            /* No DSP wrote this tick. Preserve earlier native slices if
 +             * the APU halted in the middle of the eight-tick EP epoch. */
 +            int offset = (d->ep_frame_div % 8) * NUM_SAMPLES_PER_FRAME;
-+            memset(d->monitor.frame_buf + offset, 0,
-+                   NUM_SAMPLES_PER_FRAME * sizeof(d->monitor.frame_buf[0]));
++            if (!d->monitor.ep_fifo_frame_valid)
++                memset(d->monitor.frame_buf + offset, 0,
++                       NUM_SAMPLES_PER_FRAME * sizeof(d->monitor.frame_buf[0]));
              /* Lightweight: just monitor frame (test tone + software mixer) */
              mcpx_apu_monitor_frame(d);
              d->ep_frame_div++;
-@@ -499,6 +592,7 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
+@@ -499,6 +595,7 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
  {
      memset(d->regs, 0, sizeof(d->regs));
      mcpx_apu_vp_reset(d);
@@ -631,7 +635,7 @@ index 459be77..47010b6 100644
  
      if (d->gp.dsp) {
          memset((void *)d->gp.dsp->core.pram_opcache, 0,
-@@ -516,6 +610,11 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
+@@ -516,6 +613,11 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
   * ============================================================ */
  
  MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
@@ -643,7 +647,7 @@ index 459be77..47010b6 100644
  {
      MCPXAPUState *d = (MCPXAPUState *)calloc(1, sizeof(MCPXAPUState));
      if (!d) {
-@@ -526,6 +625,10 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
+@@ -526,6 +628,10 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
      g_apu_ram_ptr = ram_ptr;
      g_state = d;
      d->ram_ptr = ram_ptr;
@@ -654,7 +658,7 @@ index 459be77..47010b6 100644
  
      d->set_irq = false;
      d->exiting = false;
-@@ -581,6 +684,7 @@ void mcpx_apu_shutdown(MCPXAPUState *d)
+@@ -581,6 +687,7 @@ void mcpx_apu_shutdown(MCPXAPUState *d)
  
      qemu_thread_join(&d->apu_thread);
      mcpx_apu_vp_finalize(d);
@@ -662,7 +666,7 @@ index 459be77..47010b6 100644
      mcpx_apu_monitor_finalize(d);
  
      free(d);
-@@ -614,8 +718,12 @@ void mcpx_apu_dispatch_mmio(MCPXAPUState *d, hwaddr addr, uint64_t val,
+@@ -614,8 +721,12 @@ void mcpx_apu_dispatch_mmio(MCPXAPUState *d, hwaddr addr, uint64_t val,
          if (is_write) {
              mcpx_apu_write(d, addr, val, size);
          }
@@ -676,7 +680,7 @@ index 459be77..47010b6 100644
  }
  
  /* ============================================================
-@@ -630,6 +738,10 @@ uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size)
+@@ -630,6 +741,10 @@ uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size)
          return mcpx_apu_vp_read(d, addr - 0x20000, size);
      } else if (addr < 0x20000) {
          return mcpx_apu_read(d, (hwaddr)addr, size);
@@ -689,10 +693,10 @@ index 459be77..47010b6 100644
  }
 diff --git a/src/apu/apu_dma.c b/src/apu/apu_dma.c
 new file mode 100644
-index 0000000..7a8d019
+index 0000000..338444d
 --- /dev/null
 +++ b/src/apu/apu_dma.c
-@@ -0,0 +1,690 @@
+@@ -0,0 +1,695 @@
 +/*
 + * MCPX DSP DMA
 + *
@@ -1292,7 +1296,8 @@ index 0000000..7a8d019
 +
 +void dsp_dma_completion_seen(DSPDMAState *s)
 +{
-+    if (s->eol) {
++    if (s->eol && (s->next_block & NODE_POINTER_EOL) &&
++        !(s->control & DMA_CONTROL_FROZEN)) {
 +        s->control &= ~DMA_CONTROL_RUNNING;
 +        s->dma_read_count = 0;
 +    }
@@ -1310,8 +1315,12 @@ index 0000000..7a8d019
 +         * the program has looked at the engine: two reads here, or one of
 +         * the interrupt status with EOL set (dsp_dma_completion_seen).
 +         * Then the register reads 0, as probed after every completed
-+         * chain: not RUNNING, and not STOPPED either. */
-+        if (s->control & DMA_CONTROL_RUNNING) {
++         * chain: not RUNNING, and not STOPPED either. The next pointer
++         * identifies the current chain's completion, including an empty
++         * chain. EOL itself is sticky and may belong to an earlier chain. */
++        if ((s->control & DMA_CONTROL_RUNNING) &&
++            (s->next_block & NODE_POINTER_EOL) &&
++            !(s->control & DMA_CONTROL_FROZEN)) {
 +            s->dma_read_count++;
 +            if (s->dma_read_count > 2) {
 +                s->control &= ~DMA_CONTROL_RUNNING;
@@ -1558,7 +1567,7 @@ index 0000000..356a5f4
 +
 +#endif
 diff --git a/src/apu/apu_dsp.c b/src/apu/apu_dsp.c
-index de14f26..f5c5263 100644
+index de14f26..e69a617 100644
 --- a/src/apu/apu_dsp.c
 +++ b/src/apu/apu_dsp.c
 @@ -1,17 +1,6 @@
@@ -1580,7 +1589,7 @@ index de14f26..f5c5263 100644
   *
   * Copyright (c) 2012 espes
   * Copyright (c) 2019-2025 Matt Borgerson
-@@ -24,10 +13,504 @@
+@@ -24,10 +13,513 @@
  
  #include "apu_state.h"
  #include "fpconv.h"
@@ -1723,10 +1732,12 @@ index de14f26..f5c5263 100644
 +    if (full_ep_fifo0_block && apu->trace_dsp_state)
 +        apu->dsp_trace_ep_fifo_writes++;
 +    if (full_ep_fifo0_block &&
-+        apu->monitor.point != MCPX_APU_DEBUG_MON_AC97) {
++        (apu->monitor.point == MCPX_APU_DEBUG_MON_EP ||
++         apu->monitor.point == MCPX_APU_DEBUG_MON_GP_OR_EP)) {
 +        if (apu->trace_dsp_state) apu->dsp_trace_ep_fifo_captured++;
 +        memcpy(apu->monitor.frame_buf, original_bytes,
 +               sizeof(apu->monitor.frame_buf));
++        apu->monitor.ep_fifo_frame_valid = true;
 +    }
 +    return true;
 +}
@@ -1979,8 +1990,15 @@ index de14f26..f5c5263 100644
 +            dsp->interrupts |= DSP_START_FRAME_INTERRUPT;
 +    }
 +    dsp->cycles_base += DSP_FRAME_CYCLES;
-+    dsp56300_set_cycle_count(dsp->engine.jit, 0);
-+    dsp56300_set_halt_requested(dsp->engine.jit, false);
++    /* The JIT adds to its saved budget. A peripheral HALT leaves positive
++     * unused cycles there; discard those between hardware frames, while
++     * retaining a completed instruction's negative cycle overshoot. State
++     * synchronization is safe here, outside the execution callback. */
++    dsp56300_get_state(dsp->engine.jit, &state);
++    if (state.cycle_budget > 0) state.cycle_budget = 0;
++    state.cycle_count = 0;
++    state.halt_requested = false;
++    dsp56300_set_state(dsp->engine.jit, &state);
 +    dsp56300_run(dsp->engine.jit, (int32_t)DSP_FRAME_CYCLES);
 +    dsp56300_get_state(dsp->engine.jit, &state);
 +    if (state.power_state != 0)
@@ -2085,7 +2103,7 @@ index de14f26..f5c5263 100644
  /* ── DSP command doorbell acknowledgement ────────────────────────────────
   *
   * DirectSound does not stop at creating the device. It hands the audio DSP a
-@@ -103,7 +586,11 @@ static void dsp_ack_frame(MCPXAPUState *d)
+@@ -103,7 +595,11 @@ static void dsp_ack_frame(MCPXAPUState *d)
      if (!d->ram_ptr)
          return;
      for (i = 0; i < s_dsp_ack_count; i++) {
@@ -2098,7 +2116,7 @@ index de14f26..f5c5263 100644
          if (*slot) {
              static int shown[APU_DSP_ACK_MAX];
              if (shown[i]++ < 3)
-@@ -114,21 +601,93 @@ static void dsp_ack_frame(MCPXAPUState *d)
+@@ -114,21 +610,94 @@ static void dsp_ack_frame(MCPXAPUState *d)
      }
  }
  
@@ -2191,12 +2209,32 @@ index de14f26..f5c5263 100644
 +void mcpx_apu_dsp_reset(MCPXAPUState *d)
 +{
 +    if (!d) return;
++    d->monitor.ep_fifo_frame_valid = false;
 +    if (d->gp.dsp) dsp_reset_core(d->gp.dsp);
 +    if (d->ep.dsp) dsp_reset_core(d->ep.dsp);
  }
  
  void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
-@@ -157,6 +716,29 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d,
+@@ -141,30 +710,43 @@ void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
+ void mcpx_apu_dsp_frame(MCPXAPUState *d,
+                          float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME])
+ {
+-    /* Bypass DSP: take mixbin 0 (front-left) and mixbin 1 (front-right)
+-     * and write them directly to the monitor frame buffer as the final
+-     * EP output.
+-     *
+-     * The Xbox DirectSound typically routes:
+-     *   Mixbin 0 = Front Left
+-     *   Mixbin 1 = Front Right
+-     *   Mixbin 2 = Center (often unused in stereo)
+-     *   Mixbin 3 = LFE
+-     *   Mixbin 4-5 = Rear L/R
+-     *
+-     * For stereo output, bins 0 and 1 are what we want.
+-     */
++    /* Run GP effects and EP encoding for this 32-sample tick. A complete
++     * native EP PCM block owns the eight-tick monitor epoch; otherwise
++     * direct mixdown supplies each tick's fallback stereo slice. */
  
      int off = (d->ep_frame_div % 8) * NUM_SAMPLES_PER_FRAME;
  
@@ -2221,11 +2259,23 @@ index de14f26..f5c5263 100644
 +        g_dbg.ep.cycles = d->ep.dsp->core.cycle_count;
 +    }
 +
-+    /* Retain the address-based compatibility handshake until the guest's
-+     * Xbox DMA command path is implemented and can service it itself. */
++    /* Retain the compatibility handshake for command behavior beyond the
++     * modeled DSP execution and DMA path. */
      dsp_ack_frame(d);
  
-     if (d->monitor.point != MCPX_APU_DEBUG_MON_VP) {
+-    if (d->monitor.point != MCPX_APU_DEBUG_MON_VP) {
++    if (d->monitor.point != MCPX_APU_DEBUG_MON_VP &&
++        !d->monitor.ep_fifo_frame_valid) {
+         for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++) {
+             /* Bins 2..31 used to be computed and then dropped on the floor.
+-             * On hardware the GP and EP mix the submixes down; here they are
+-             * stubs, so thirty of thirty-two bins were discarded every frame
+-             * with no counter anywhere to say so.
++             * On hardware the GP and EP mix the submixes down. The fallback
++             * includes all bins when native output is unavailable.
+              *
+              * Measured on Jet Set Radio Future, one 200 s gameplay run, with
+              * a positive control moving beside it:
 @@ -213,6 +795,4 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d,
          }
      }
@@ -2600,7 +2650,7 @@ index dd6bec1..5718709 100644
  
  /* Stub address space - just passed to ldl_le_phys etc. (ignored) */
 diff --git a/src/apu/apu_state.h b/src/apu/apu_state.h
-index 651b334..fad2a8f 100644
+index 651b334..f09f135 100644
 --- a/src/apu/apu_state.h
 +++ b/src/apu/apu_state.h
 @@ -24,6 +24,8 @@
@@ -2688,7 +2738,15 @@ index 651b334..fad2a8f 100644
      MemoryRegion mmio;
  
      MCPXAPUVPState vp;
-@@ -513,11 +519,21 @@ void mcpx_apu_vp_finalize(MCPXAPUState *d);
+@@ -498,6 +504,7 @@ struct MCPXAPUState {
+     struct {
+         McpxApuDebugMonitorPoint point;
+         int16_t frame_buf[256][2];
++        bool ep_fifo_frame_valid; /* Native PCM owns this epoch until consumed. */
+         void *stream; /* SDL_AudioStream* - stubbed */
+         int queued_bytes_low, queued_bytes_high;
+     } monitor;
+@@ -513,11 +520,24 @@ void mcpx_apu_vp_finalize(MCPXAPUState *d);
  void mcpx_apu_vp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME]);
  void mcpx_apu_vp_reset(MCPXAPUState *d);
  
@@ -2700,6 +2758,9 @@ index 651b334..fad2a8f 100644
  void mcpx_apu_update_dsp_preference(MCPXAPUState *d);
  void mcpx_apu_dsp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME]);
  
++/* Output consumes one completed eight-tick EP epoch. */
++void mcpx_apu_monitor_frame(MCPXAPUState *d);
++
 +/* Aligned 32-bit GP/EP program-memory and reset-register MMIO. Unknown
 + * offsets retain the existing zero/ignored fallback. These acquire d->lock;
 + * the public MMIO dispatcher calls them without holding that lock. */
@@ -21540,10 +21601,10 @@ index 0000000..8607782
 +#endif
 diff --git a/src/nv2a/kelvin/kelvin_render.c b/src/nv2a/kelvin/kelvin_render.c
 new file mode 100644
-index 0000000..1786421
+index 0000000..3c3129b
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_render.c
-@@ -0,0 +1,5314 @@
+@@ -0,0 +1,5319 @@
 +/*
 + * Kelvin renderer: surfaces, clears, blits, fences and the draw path --
 + * vertex fetch, primitive assembly, clipping and rasterization.
@@ -21568,6 +21629,7 @@ index 0000000..1786421
 +#include <stdlib.h>
 +#include <limits.h>
 +#include "kelvin_render.h"
++#include "kelvin_trace.h"
 +#include "kelvin_workers.h"
 +#include "kelvin_gpu.h"
 +#include <intrin.h>
@@ -24898,6 +24960,7 @@ index 0000000..1786421
 +             * supplies, as fetched. */
 +            float in[NV2A_VERTEXSHADER_ATTRIBUTES][4];
 +            fetch_vertex(pg, src, idx[i], in);
++            kelvin_trace_record_begin(stderr);
 +            fprintf(stderr, "[KTRACE]      in");
 +            for (k = 0; k < NV2A_VERTEXSHADER_ATTRIBUTES; k++) {
 +                if (pg->vertex_attributes[k].count ||
@@ -24908,9 +24971,11 @@ index 0000000..1786421
 +                }
 +            }
 +            fprintf(stderr, "\n");
++            kelvin_trace_record_end(stderr);
 +        }
 +    }
 +    if (src->kind == SRC_INLINE_ARRAY) {
++        kelvin_trace_record_begin(stderr);
 +        fprintf(stderr, "[KTRACE]   inline array: vertex %u bytes, %u words;",
 +                src->vertex_size, pg->inline_array_length);
 +        for (k = 0; k < NV2A_VERTEXSHADER_ATTRIBUTES; k++) {
@@ -24921,6 +24986,7 @@ index 0000000..1786421
 +            }
 +        }
 +        fprintf(stderr, "\n");
++        kelvin_trace_record_end(stderr);
 +    }
 +    fflush(stderr);
 +}
@@ -29104,12 +29170,44 @@ index 0000000..8fc19b1
 +    _mm_storeu_ps(out, sample_2d(t, face, 0.5f * (sc / ma + 1.0f),
 +                                 0.5f * (tc / ma + 1.0f), lod));
 +}
+diff --git a/src/nv2a/kelvin/kelvin_trace.h b/src/nv2a/kelvin/kelvin_trace.h
+new file mode 100644
+index 0000000..f4db705
+--- /dev/null
++++ b/src/nv2a/kelvin/kelvin_trace.h
+@@ -0,0 +1,26 @@
++/* Keep a diagnostic record's multiple stdio writes together.
++ * Released under LGPL-2.1-or-later, as part of the Kelvin renderer. */
++#ifndef XBOX_NV2A_KELVIN_TRACE_H
++#define XBOX_NV2A_KELVIN_TRACE_H
++
++#include <stdio.h>
++
++static inline void kelvin_trace_record_begin(FILE *stream)
++{
++#ifdef _MSC_VER
++    _lock_file(stream);
++#else
++    flockfile(stream);
++#endif
++}
++
++static inline void kelvin_trace_record_end(FILE *stream)
++{
++#ifdef _MSC_VER
++    _unlock_file(stream);
++#else
++    funlockfile(stream);
++#endif
++}
++
++#endif
 diff --git a/src/nv2a/kelvin/kelvin_vsh.c b/src/nv2a/kelvin/kelvin_vsh.c
 new file mode 100644
-index 0000000..a5c2480
+index 0000000..2d3a097
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_vsh.c
-@@ -0,0 +1,936 @@
+@@ -0,0 +1,939 @@
 +/*
 + * Kelvin vertex stage.
 + *
@@ -29133,6 +29231,7 @@ index 0000000..a5c2480
 +
 +#include <float.h>
 +#include "kelvin_render.h"
++#include "kelvin_trace.h"
 +#include "nv2a_vsh_cpu/nv2a_vsh_emulator.h"
 +#include "nv2a_vsh_cpu/nv2a_vsh_emulator4.h"
 +#include "nv2a_vsh_cpu/nv2a_vsh_emulator8.h"
@@ -29800,6 +29899,7 @@ index 0000000..a5c2480
 +    for (n = 0, st = s_vs.entry->prog.steps; n < NV2A_MAX_TRANSFORM_PROGRAM_LENGTH;
 +         n++, st++) {
 +        const Nv2aVshOperation *pair[2] = { &st->mac, &st->ilu };
++        kelvin_trace_record_begin(stderr);
 +        fprintf(stderr, "[KTRACE]     %3d:", n);
 +        for (k = 0; k < 2; k++) {
 +            const Nv2aVshOperation *op = pair[k];
@@ -29834,6 +29934,7 @@ index 0000000..a5c2480
 +            }
 +        }
 +        fputc('\n', stderr);
++        kelvin_trace_record_end(stderr);
 +        if (st->is_final) {
 +            break;
 +        }
@@ -40970,31 +41071,28 @@ index dc1dae0..d50ce23 100644
  
 diff --git a/tests/apu_dsp_core/CMakeLists.txt b/tests/apu_dsp_core/CMakeLists.txt
 new file mode 100644
-index 0000000..d37506f
+index 0000000..345d047
 --- /dev/null
 +++ b/tests/apu_dsp_core/CMakeLists.txt
-@@ -0,0 +1,15 @@
+@@ -0,0 +1,12 @@
 +cmake_minimum_required(VERSION 3.20)
 +project(apu_dsp_core_test C)
 +set(CMAKE_C_STANDARD 11)
 +add_subdirectory(../.. runtime)
 +add_executable(apu_dsp_core_test test_main.c test_dma.c)
-+get_filename_component(BLACK_PROJECT_ROOT
-+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../../" ABSOLUTE)
 +target_include_directories(apu_dsp_core_test PRIVATE
 +    ../../src/apu
 +    ../../src
-+    "${BLACK_PROJECT_ROOT}/.work/err009-dsp56300/crates/emu-ffi/include"
 +)
 +target_link_libraries(apu_dsp_core_test PRIVATE xbox_apu)
 +enable_testing()
 +add_test(NAME apu_dsp_core COMMAND apu_dsp_core_test)
 diff --git a/tests/apu_dsp_core/test_dma.c b/tests/apu_dsp_core/test_dma.c
 new file mode 100644
-index 0000000..4ed7722
+index 0000000..e96889b
 --- /dev/null
 +++ b/tests/apu_dsp_core/test_dma.c
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,224 @@
 +#include "apu_dma.h"
 +#include "apu_dma_regs.h"
 +
@@ -41095,6 +41193,73 @@ index 0000000..4ed7722
 +        return 2;
 +    }
 +
++    /* Completed transfers retain two RUNNING polls for the startup
++     * handshake, then report completion. Freezing holds that completion
++     * until UNFREEZE regardless of how often the guest polls. */
++    dsp_dma_reset(&dma);
++    dsp_dma_write(&dma, DMA_NEXT_BLOCK, 0);
++    dsp_dma_write(&dma, DMA_CONTROL, DMA_CONTROL_ACTION_START);
++    dsp_dma_write(&dma, DMA_CONTROL, DMA_CONTROL_ACTION_FREEZE);
++    for (unsigned i = 0; i < 5; ++i) {
++        uint32_t control = dsp_dma_read(&dma, DMA_CONTROL);
++        if ((control & (DMA_CONTROL_RUNNING | DMA_CONTROL_FROZEN)) !=
++            (DMA_CONTROL_RUNNING | DMA_CONTROL_FROZEN) || dma.eol ||
++            !dma.eol_held) {
++            dsp_dma_destroy(&dma);
++            return 6;
++        }
++    }
++    dsp_dma_write(&dma, DMA_CONTROL, DMA_CONTROL_ACTION_UNFREEZE);
++    if (!dma.eol || dma.eol_held ||
++        !(dsp_dma_read(&dma, DMA_CONTROL) & DMA_CONTROL_RUNNING) ||
++        !(dsp_dma_read(&dma, DMA_CONTROL) & DMA_CONTROL_RUNNING) ||
++        (dsp_dma_read(&dma, DMA_CONTROL) & DMA_CONTROL_RUNNING)) {
++        dsp_dma_destroy(&dma);
++        return 7;
++    }
++
++    /* EOL is a sticky interrupt latch. Starting a later cyclic chain must
++     * not let that earlier latch retire the new transfer through polling
++     * or through acknowledgement of the previous completion interrupt. */
++    memory.words[0] = 0;
++    memory.words[1] = (1u << 1) | (4u << 10);
++    memory.words[2] = 0;
++    dsp_dma_write(&dma, DMA_NEXT_BLOCK, 0);
++    dsp_dma_write(&dma, DMA_CONTROL, DMA_CONTROL_ACTION_START);
++    if (!dma.eol) {
++        dsp_dma_destroy(&dma);
++        return 10;
++    }
++    for (unsigned i = 0; i < 5; ++i) {
++        if (!(dsp_dma_read(&dma, DMA_CONTROL) & DMA_CONTROL_RUNNING)) {
++            dsp_dma_destroy(&dma);
++            return 11;
++        }
++    }
++    dsp_dma_write(&dma, DMA_CONTROL, DMA_CONTROL_ACTION_FREEZE);
++    dsp_dma_completion_seen(&dma);
++    if (!(dsp_dma_read(&dma, DMA_CONTROL) & DMA_CONTROL_RUNNING)) {
++        dsp_dma_destroy(&dma);
++        return 12;
++    }
++    dsp_dma_write(&dma, DMA_CONTROL, DMA_CONTROL_ACTION_UNFREEZE);
++    dsp_dma_completion_seen(&dma);
++    if (!(dsp_dma_read(&dma, DMA_CONTROL) & DMA_CONTROL_RUNNING)) {
++        dsp_dma_destroy(&dma);
++        return 13;
++    }
++
++    /* An empty chain is already at its terminator and also completes. */
++    dsp_dma_reset(&dma);
++    dsp_dma_write(&dma, DMA_NEXT_BLOCK, NODE_POINTER_EOL);
++    dsp_dma_write(&dma, DMA_CONTROL, DMA_CONTROL_ACTION_START);
++    if (!(dsp_dma_read(&dma, DMA_CONTROL) & DMA_CONTROL_RUNNING) ||
++        !(dsp_dma_read(&dma, DMA_CONTROL) & DMA_CONTROL_RUNNING) ||
++        (dsp_dma_read(&dma, DMA_CONTROL) & DMA_CONTROL_RUNNING)) {
++        dsp_dma_destroy(&dma);
++        return 14;
++    }
++
 +    /* An unsupported format is rejected, reported, and does not transfer. */
 +    dsp_dma_reset(&dma);
 +    memset(memory.bytes, 0, sizeof(memory.bytes));
@@ -41138,15 +41303,26 @@ index 0000000..4ed7722
 +        dsp_dma_destroy(&dma);
 +        return 5;
 +    }
++    for (unsigned i = 0; i < 5; ++i) {
++        if (!(dsp_dma_read(&dma, DMA_CONTROL) & DMA_CONTROL_RUNNING)) {
++            dsp_dma_destroy(&dma);
++            return 8;
++        }
++    }
++    dsp_dma_write(&dma, DMA_CONTROL, DMA_CONTROL_ACTION_STOP);
++    if (dsp_dma_read(&dma, DMA_CONTROL) & DMA_CONTROL_RUNNING) {
++        dsp_dma_destroy(&dma);
++        return 9;
++    }
 +    dsp_dma_destroy(&dma);
 +    return 0;
 +}
 diff --git a/tests/apu_dsp_core/test_main.c b/tests/apu_dsp_core/test_main.c
 new file mode 100644
-index 0000000..5e9b837
+index 0000000..bd8e079
 --- /dev/null
 +++ b/tests/apu_dsp_core/test_main.c
-@@ -0,0 +1,337 @@
+@@ -0,0 +1,488 @@
 +#include "apu_dsp_engine.h"
 +#include "apu_state.h"
 +#include "apu_dma_regs.h"
@@ -41383,6 +41559,27 @@ index 0000000..5e9b837
 +        goto done;
 +    }
 +
++    /* A short halted frame must not donate its unused execution budget
++     * to the following busy frame. HALT leaves PC at the JMP $2 loop. */
++    mcpx_dsp_engine_reset(&apu->gp.dsp->engine);
++    apu->gp.dsp->core.pram[0] = 0x08F484; /* MOVEP #1,X:$FFFFC4 */
++    apu->gp.dsp->core.pram[1] = 1;
++    apu->gp.dsp->core.pram[2] = 0x0C0002;
++    mcpx_apu_dsp_frame(apu, mixbins);
++    if (!apu->gp.dsp->core.is_idle ||
++        apu->gp.dsp->core.cycle_count >= 88875u) {
++        result = 4;
++        goto done;
++    }
++    mcpx_apu_dsp_frame(apu, mixbins);
++    if (apu->gp.dsp->core.cycle_count < 88870u ||
++        apu->gp.dsp->core.cycle_count > 88880u) {
++        fprintf(stderr, "Busy GP frame consumed %u cycles\n",
++                apu->gp.dsp->core.cycle_count);
++        result = 5;
++        goto done;
++    }
++
 +done:
 +    mcpx_apu_dsp_finalize(apu);
 +    free(apu);
@@ -41439,6 +41636,131 @@ index 0000000..5e9b837
 +    return result;
 +}
 +
++static int check_ep_fifo_survives_frame_mixdown(void)
++{
++    MCPXAPUState *apu = (MCPXAPUState *)calloc(1, sizeof(*apu));
++    float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME] = {{0}};
++    int16_t expected[256][2];
++    uint32_t page = 0x2000;
++    int result = 0;
++    if (!apu) return 1;
++    apu->ram_size = 0x4000;
++    apu->ram_ptr = (uint8_t *)calloc(1, apu->ram_size);
++    if (!apu->ram_ptr) { free(apu); return 2; }
++    mcpx_apu_dsp_init(apu);
++    DSPState *ep = apu->ep.dsp;
++    if (!ep || !ep->engine_ready) { result = 3; goto done; }
++
++    apu->monitor.point = MCPX_APU_DEBUG_MON_EP;
++    apu->regs[NV_PAPU_EPFADDR] = 0x100;
++    apu->regs[NV_PAPU_EPFMAXSGE] = 0;
++    apu->regs[NV_PAPU_EPOFBASE0] = 0;
++    apu->regs[NV_PAPU_EPOFEND0] = 0x800;
++    memcpy(apu->ram_ptr + 0x100, &page, sizeof(page));
++    ep->core.xram[0] = NODE_POINTER_EOL;
++    ep->core.xram[1] = NODE_CONTROL_DIRECTION | (1u << 10) | (1u << 14);
++    ep->core.xram[2] = 512;
++    ep->core.xram[3] = 0x100;
++    for (unsigned i = 0; i < 256; ++i) {
++        for (unsigned ch = 0; ch < 2; ++ch) {
++            expected[i][ch] = (int16_t)(1000 + 2 * i + ch);
++            ep->core.xram[0x100 + 2 * i + ch] =
++                (uint32_t)(uint16_t)expected[i][ch] << 8;
++        }
++    }
++    for (unsigned i = 0; i < NUM_SAMPLES_PER_FRAME; ++i) {
++        mixbins[0][i] = 0.25f;
++        mixbins[1][i] = -0.25f;
++    }
++    /* Execute the real peripheral DMA kick from an enabled EP frame:
++     * MOVEP #0,X:$FFFFD4; MOVEP #START,X:$FFFFD6; HALT; JMP $6.
++     * The block differs from fallback mixbins, so a lost native slice is
++     * observable even if all later ticks keep producing fallback audio. */
++    ep->core.pram[0] = 0x08F494;
++    ep->core.pram[1] = 0;
++    ep->core.pram[2] = 0x08F496;
++    ep->core.pram[3] = DMA_CONTROL_ACTION_START;
++    ep->core.pram[4] = 0x08F484;
++    ep->core.pram[5] = 1;
++    ep->core.pram[6] = 0x0C0006;
++    apu->ep.regs[NV_PAPU_EPRST] =
++        NV_PAPU_GPRST_GPRST | NV_PAPU_GPRST_GPDSPRST;
++    for (unsigned tick = 0; tick < 8; ++tick) {
++        apu->ep_frame_div = tick;
++        mcpx_apu_dsp_frame(apu, mixbins);
++        if (memcmp(apu->monitor.frame_buf, expected, sizeof(expected))) {
++            fprintf(stderr, "EP tick %u PC=%06X cycles=%u error=%u valid=%u"
++                    " FIFOcur=%u sample=%d expected=%d\n", tick,
++                    ep->core.pc, ep->core.cycle_count, ep->dma.error,
++                    apu->monitor.ep_fifo_frame_valid,
++                    apu->regs[NV_PAPU_EPOFCUR0],
++                    apu->monitor.frame_buf[0][0], expected[0][0]);
++            result = 4;
++            goto done;
++        }
++        /* Native ownership lasts through the epoch even if execution stops. */
++        apu->ep.regs[NV_PAPU_EPRST] = 0;
++    }
++    if (memcmp(apu->ram_ptr + page, expected, sizeof(expected))) {
++        result = 5;
++        goto done;
++    }
++
++    /* Consumption releases ownership: the next epoch can use fallback. */
++    mcpx_apu_monitor_frame(apu);
++    apu->ep_frame_div = 8;
++    mcpx_apu_dsp_frame(apu, mixbins);
++    for (unsigned i = 0; i < NUM_SAMPLES_PER_FRAME; ++i) {
++        if (apu->monitor.frame_buf[i][0] != 8191 ||
++            apu->monitor.frame_buf[i][1] != -8191) {
++            result = 6;
++            goto done;
++        }
++    }
++
++    /* A capture on the final tick replaces earlier fallback slices as a
++     * whole block too, including the default combined GP/EP monitor. */
++    mcpx_dsp_engine_reset(&ep->engine);
++    dsp_dma_reset(&ep->dma);
++    apu->regs[NV_PAPU_EPOFCUR0] = 0;
++    apu->monitor.point = MCPX_APU_DEBUG_MON_GP_OR_EP;
++    for (unsigned tick = 0; tick < 8; ++tick) {
++        apu->ep_frame_div = 8 + tick;
++        apu->ep.regs[NV_PAPU_EPRST] = tick == 7
++            ? NV_PAPU_GPRST_GPRST | NV_PAPU_GPRST_GPDSPRST : 0;
++        mcpx_apu_dsp_frame(apu, mixbins);
++    }
++    if (memcmp(apu->monitor.frame_buf, expected, sizeof(expected))) {
++        result = 8;
++        goto done;
++    }
++    mcpx_apu_monitor_frame(apu);
++
++    /* EP output cannot replace the user's VP debug monitoring buffer. */
++    mcpx_dsp_engine_reset(&ep->engine);
++    dsp_dma_reset(&ep->dma);
++    apu->regs[NV_PAPU_EPOFCUR0] = 0;
++    apu->ep.regs[NV_PAPU_EPRST] =
++        NV_PAPU_GPRST_GPRST | NV_PAPU_GPRST_GPDSPRST;
++    apu->monitor.point = MCPX_APU_DEBUG_MON_VP;
++    memset(apu->monitor.frame_buf, 0x5A, sizeof(apu->monitor.frame_buf));
++    apu->ep_frame_div = 16;
++    mcpx_apu_dsp_frame(apu, mixbins);
++    for (unsigned i = 0; i < 256; ++i) {
++        if (apu->monitor.frame_buf[i][0] != 0x5A5A ||
++            apu->monitor.frame_buf[i][1] != 0x5A5A) {
++            result = 7;
++            goto done;
++        }
++    }
++
++done:
++    mcpx_apu_dsp_finalize(apu);
++    free(apu->ram_ptr);
++    free(apu);
++    return result;
++}
++
 +int main(void)
 +{
 +    int result = check_dsp_trace_event_flags();
@@ -41481,24 +41803,26 @@ index 0000000..5e9b837
 +        fprintf(stderr, "APU DMA SGE bounds test failed (%d)\n", result);
 +        return result + 60;
 +    }
++    result = check_ep_fifo_survives_frame_mixdown();
++    if (result) {
++        fprintf(stderr, "EP FIFO output ownership test failed (%d)\n", result);
++        return result + 70;
++    }
 +    puts("DSP core C API tests passed");
 +    return 0;
 +}
 diff --git a/tests/apu_mixdown/CMakeLists.txt b/tests/apu_mixdown/CMakeLists.txt
-index 30bc3c7..ed4449e 100644
+index 30bc3c7..40bf4e9 100644
 --- a/tests/apu_mixdown/CMakeLists.txt
 +++ b/tests/apu_mixdown/CMakeLists.txt
-@@ -3,7 +3,13 @@ project(apu_mixdown_test C)
+@@ -3,7 +3,10 @@ project(apu_mixdown_test C)
  set(CMAKE_C_STANDARD 11)
  add_subdirectory(../.. runtime)
  add_executable(apu_mixdown_test test_main.c)
 -target_include_directories(apu_mixdown_test PRIVATE ../../src ../../src/apu)
-+get_filename_component(BLACK_PROJECT_ROOT
-+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../../" ABSOLUTE)
 +target_include_directories(apu_mixdown_test PRIVATE
 +    ../../src
 +    ../../src/apu
-+    "${BLACK_PROJECT_ROOT}/.work/err009-dsp56300/crates/emu-ffi/include"
 +)
  target_link_libraries(apu_mixdown_test PRIVATE xbox_apu)
  enable_testing()

@@ -1,5 +1,6 @@
 // Compiled with the production launcher. Uses isolated fixtures; never launches a game.
 using System;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
@@ -28,6 +29,11 @@ namespace BlackXboxLauncher
         }
         private static LaunchOptions Options(LauncherForm form)
         { return (LaunchOptions)typeof(LauncherForm).GetMethod("Options", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, null); }
+        private static string ReadActiveLog(string path)
+        {
+            using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var reader = new StreamReader(stream)) return reader.ReadToEnd();
+        }
         private static void Invalid(LaunchOptions options, string expected)
         {
             try { options.Validate(); }
@@ -37,6 +43,18 @@ namespace BlackXboxLauncher
         [STAThread]
         private static int Main(string[] args)
         {
+            if (args.Length == 1 && args[0] == "--emit-trace")
+            {
+                for (int i = 0; i < 20; i++)
+                {
+                    Console.WriteLine("[KTRACE] " + i);
+                    Console.Error.WriteLine("[DSPTRACE] " + i);
+                    Console.WriteLine("[KDL] " + i);
+                }
+                Console.WriteLine("ordinary output"); Console.Error.WriteLine("ordinary error");
+                return 0;
+            }
+            if (args.Length == 1 && args[0] == "--exit-stub") return 0;
             try
             {
                 Check(args.Length == 1, "Expected an isolated build fixture directory.");
@@ -70,6 +88,13 @@ namespace BlackXboxLauncher
                 Check(traceSettings.VisualTraceEnabled && traceSettings.VisualTraceFrames == "120-180/30", "Visual trace settings persist.");
                 var malformedTraceSettings = LaunchOptions.FromSettingsJson("{\"VisualTraceEnabled\":true,\"VisualTraceFrames\":\"bad\"}");
                 Check(malformedTraceSettings.VisualTraceEnabled && malformedTraceSettings.VisualTraceFrames == defaults.VisualTraceFrames, "Malformed persisted intervals are repaired.");
+                foreach (string malformedVisualField in new[] { "\"VisualTraceEnabled\":\"yes\"", "\"VisualTraceEnabled\":{}", "\"VisualTraceFrames\":{}", "\"VisualTraceFrames\":[120]" })
+                {
+                    var independentlyRepaired = LaunchOptions.FromSettingsJson("{" + malformedVisualField + ",\"Threads\":7,\"AoMethod\":\"gtao\"}");
+                    Check(!independentlyRepaired.VisualTraceEnabled && independentlyRepaired.VisualTraceFrames == defaults.VisualTraceFrames &&
+                        independentlyRepaired.Threads == 7 && independentlyRepaired.AoMethod == "gtao",
+                        "Malformed visual trace field does not drop other settings: " + malformedVisualField);
+                }
                 Check(!LaunchOptions.FromSettingsJson("{} ").VisualTraceEnabled, "Older launcher settings keep tracing disabled.");
                 Check(LaunchOptions.FromSettingsJson("{\"DspTraceEnabled\":true}").DspTraceEnabled,
                     "DSP trace setting persists without a schema migration.");
@@ -186,6 +211,43 @@ namespace BlackXboxLauncher
                     Check(File.ReadAllText(Path.Combine(routeDir, "kgpu-draw-trace.log")) == "[KDL] f120 #1 draw vs 463DBDF0" + Environment.NewLine,
                         "KGPU draw trace is routed separately from session.log.");
                 }
+                foreach (bool failCompletion in new[] { false, true })
+                {
+                    string lifecycleDir = Path.Combine(fixture, failCompletion ? "failed-completion" : "completed-output"); Directory.CreateDirectory(lifecycleDir);
+                    using (var lifecycle = new GameSession())
+                    {
+                        var visualLog = new VisualTraceLog(Path.Combine(lifecycleDir, "visual-trace.log"), 128);
+                        var dspLog = new VisualTraceLog(Path.Combine(lifecycleDir, "audio-dsp-trace.log"), 128, "[DSPTRACE]");
+                        var drawLog = new VisualTraceLog(Path.Combine(lifecycleDir, "kgpu-draw-trace.log"), 128, "[KDL]");
+                        typeof(GameSession).GetProperty("DirectoryPath", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(lifecycle, lifecycleDir, null);
+                        typeof(GameSession).GetField("visualTraceLog", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(lifecycle, visualLog);
+                        typeof(GameSession).GetField("dspTraceLog", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(lifecycle, dspLog);
+                        typeof(GameSession).GetField("kgpuDrawTraceLog", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(lifecycle, drawLog);
+                        var child = new Process { StartInfo = new ProcessStartInfo {
+                            FileName = Assembly.GetExecutingAssembly().Location, Arguments = failCompletion ? "--exit-stub" : "--emit-trace",
+                            UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true
+                        } };
+                        typeof(GameSession).GetField("process", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(lifecycle, child);
+                        child.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e) { if (e.Data != null) lifecycle.WriteOutput(e.Data, false); };
+                        child.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e) { if (e.Data != null) lifecycle.WriteOutput(e.Data, true); };
+                        if (failCompletion)
+                        {
+                            visualLog.WriteLine("[KTRACE] dropped line");
+                            ((StreamWriter)typeof(VisualTraceLog).GetField("writer", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(visualLog)).Dispose();
+                        }
+                        child.Start(); child.BeginOutputReadLine(); child.BeginErrorReadLine();
+                        Check(lifecycle.WaitForExit() == 0, "Isolated output stub exits normally.");
+                        lifecycle.ArchiveKernelLog(fixture);
+                        var exit = new JavaScriptSerializer().Deserialize<System.Collections.Generic.Dictionary<string, object>>(File.ReadAllText(Path.Combine(lifecycleDir, "exit.json")));
+                        if (failCompletion)
+                            Check(lifecycle.LogFailure != null && (string)exit["logFailure"] == lifecycle.LogFailure,
+                                "Trace completion failures are recorded before session exit metadata is saved.");
+                        else
+                            foreach (string file in new[] { "visual-trace.log", "audio-dsp-trace.log", "kgpu-draw-trace.log" })
+                                Check(ReadActiveLog(Path.Combine(lifecycleDir, file)).Contains("20 lines discarded") && new FileInfo(Path.Combine(lifecycleDir, file)).Length <= 128,
+                                    "Redirected output is drained and finalized before session exit metadata: " + file);
+                    }
+                }
 
                 string project = Path.Combine(fixture, "AO UI");
                 Directory.CreateDirectory(Path.Combine(project, "local"));
@@ -221,6 +283,18 @@ namespace BlackXboxLauncher
                     var tip = (ToolTip)typeof(LauncherForm).GetField("settingsTip", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                     Check(tip.GetToolTip(quality).Contains("sampling density and radius") && tip.GetToolTip(quality).Contains("scene resolution"),
                         "Quality help describes actual sampling behavior.");
+                }
+                File.WriteAllText(Path.Combine(project, "local", "xbox-launcher.json"), "{\"DspTraceEnabled\":true,\"Threads\":7}");
+                using (var restoredForm = new LauncherForm(project, true))
+                {
+                    var restoredDspTrace = Find(restoredForm, "Detailed DSP state trace (GP/EP stack)") as CheckBox;
+                    Check(restoredDspTrace != null && restoredDspTrace.Checked && Options(restoredForm).DspTraceEnabled && Options(restoredForm).Threads == 7,
+                        "Reopening the launcher restores the saved DSP trace choice.");
+                    Check(restoredForm.Height <= 728 && restoredForm.MinimumSize.Height <= 728,
+                        "Launcher defaults and minimum size fit a 768-pixel screen with a taskbar.");
+                    var tabs = (TabControl)typeof(LauncherForm).GetField("settingsTabs", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(restoredForm);
+                    foreach (TabPage tab in tabs.TabPages)
+                        Check(tab.AutoScroll, "Resizing retains access to settings on the " + tab.Text + " tab.");
                 }
                 Console.WriteLine("PASS: " + checks + " actual-launcher checks.");
                 return 0;
