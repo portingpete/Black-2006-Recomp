@@ -490,10 +490,13 @@ def merge_icall_feedback(toolkit, feedback_db, feedback_dumps):
     return True
 
 
-def run_disasm(toolkit, xbe, analysis, output, seed_file=None):
+def run_disasm(toolkit, xbe, analysis, output, seed_files=None):
     arguments = [xbe, "--analysis-json", analysis, "-o", output, "--force"]
-    if seed_file is not None:
-        arguments.extend(["--seed-functions", seed_file])
+    if seed_files is not None:
+        if isinstance(seed_files, (str, Path)):
+            seed_files = [seed_files]
+        for seed_file in seed_files:
+            arguments.extend(["--seed-functions", seed_file])
     command(toolkit, "tools.disasm", arguments)
 
 
@@ -534,6 +537,10 @@ def main():
     if default_dump.is_file() and default_dump not in feedback_dumps:
         feedback_dumps.append(default_dump)
     merge_icall_feedback(toolkit, feedback_db, feedback_dumps)
+    seed_files = []
+    known_seeds = root / "scripts/icall_seed_functions.json"
+    if known_seeds.is_file():
+        seed_files.append(known_seeds)
     if feedback_db.is_file():
         seeds = work / "icall-seeds.json"
         command(toolkit, "tools.recomp.icall_feedback",
@@ -542,7 +549,9 @@ def main():
                  "seeds", "--out", seeds, "--xbe", xbe,
                  "--analysis-json", analysis])
         if json.loads(seeds.read_text(encoding="utf-8")):
-            run_disasm(toolkit, xbe, analysis, disasm, seeds)
+            seed_files.append(seeds)
+    if seed_files:
+        run_disasm(toolkit, xbe, analysis, disasm, seed_files)
     command(toolkit, "tools.func_id", [xbe, "--functions", disasm / "functions.json", "--strings", disasm / "strings.json", "--xrefs", disasm / "xrefs.json", "-o", identified])
     command(toolkit, "tools.abi_analysis", [xbe, "--disasm-dir", disasm, "--func-id-dir", identified, "--output-dir", abi])
     generated = work / "gen"

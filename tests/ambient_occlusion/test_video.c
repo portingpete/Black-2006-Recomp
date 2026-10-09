@@ -13,6 +13,416 @@
 static unsigned checks;
 #define CHECK(e) do { checks++; if (!(e)) { fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #e); exit(1); } } while (0)
 
+static int test_fire_control(int slot) { return slot == 9 ? 23 : slot == 11 ? 17 : -1; }
+static int test_aim_control(int slot) { return slot == 16 ? 22 : -1; }
+
+static void test_sustained_fire_survives_gameplay_gap(void)
+{
+    uint8_t out[20] = {0,20};
+    uint64_t token;
+    int i;
+    _putenv_s("RECOMP_BLACK_INPUT_MODE", "auto");
+    _putenv_s("RECOMP_BLACK_BIND_FIRE", "Mouse1");
+    _putenv_s("RECOMP_INPUT_TRACE", "");
+    _putenv_s("RECOMP_INPUT_SCRIPT", "");
+    _putenv_s("RECOMP_PAD_SCRIPT", "");
+    pc_input_test_reset();
+    pc_input_test_set_time(100000);
+    pc_input_set_control_resolver(test_fire_control);
+    pc_input_gameplay_tick();
+    CHECK(pc_input_gameplay_active());
+    pc_input_mouse_button_event(0, 1);
+    pc_input_apply_report(out, 0);
+    CHECK(out[11] == 0xFF && out[4] == 0);
+    pc_input_frame_complete();
+    pc_input_frame_complete(); /* a rendered frame completed before the next camera update */
+    memset(out + 2, 0, 18);
+    pc_input_apply_report(out, 0); /* the USB poll can land in the camera-update gap */
+    CHECK(out[11] == 0xFF && out[4] == 0);
+    pc_input_gameplay_tick();
+    memset(out + 2, 0, 18);
+    pc_input_apply_report(out, 0);
+    CHECK(out[11] == 0xFF && out[4] == 0);
+    for (i = 0; i < 20; ++i) {
+        pc_input_frame_complete();
+        memset(out + 2, 0, 18);
+        pc_input_apply_report(out, 0);
+        CHECK(out[11] == 0xFF && out[4] == 0);
+        pc_input_frame_complete();
+        memset(out + 2, 0, 18);
+        pc_input_apply_report(out, 0);
+        CHECK(out[11] == 0xFF && out[4] == 0);
+        pc_input_gameplay_tick();
+        memset(out + 2, 0, 18);
+        pc_input_apply_report(out, 0);
+        CHECK(out[11] == 0xFF && out[4] == 0);
+    }
+    pc_input_frame_complete(); /* the current frame was consumed by the renderer */
+    pc_input_frame_complete(); /* a later frame completed without a gameplay camera tick */
+    pc_input_test_set_time(100300); /* a short update gap must not expire held Fire */
+    memset(out + 2, 0, 18);
+    pc_input_apply_report(out, 0);
+    CHECK(out[11] == 0xFF && out[4] == 0);
+    pc_input_test_set_time(100000);
+    pc_input_mouse_button_event(0, 0);
+    memset(out + 2, 0, 18);
+    pc_input_apply_report(out, 0);
+    CHECK(out[11] == 0 && out[4] == 0);
+
+    /* Taking mouse capture during an accepted gameplay hold must not turn
+     * that hold into a menu click or cut automatic fire off after one burst. */
+    pc_input_test_reset();
+    pc_input_test_set_time(100000);
+    pc_input_set_control_resolver(test_fire_control);
+    pc_input_gameplay_tick();
+    token = pc_input_native_sample_begin();
+    pc_input_mouse_button_event(0, 1);
+    memset(out + 2, 0, 18);
+    pc_input_apply_report(out, 0);
+    CHECK(out[11] == 0xFF && out[4] == 0);
+    pc_input_native_sample_end(token, 1u << 23);
+    pc_input_frame_complete();
+    pc_input_capture_changed(1);
+    memset(out + 2, 0, 18);
+    pc_input_apply_report(out, 0);
+    CHECK(out[11] == 0xFF && out[4] == 0);
+    pc_input_mouse_button_event(0, 0);
+    memset(out + 2, 0, 18);
+    pc_input_apply_report(out, 0);
+    CHECK(out[11] == 0 && out[4] == 0);
+
+    pc_input_test_reset();
+    pc_input_test_set_time(100000);
+    pc_input_set_control_resolver(test_fire_control);
+    pc_input_gameplay_tick();
+    pc_input_key_event(0x13, 0, 1, 0); /* R is a discrete reload action. */
+    memset(out + 2, 0, 18);
+    pc_input_apply_report(out, 0);
+    CHECK(out[5] == 0xFF);
+    pc_input_frame_complete();
+    pc_input_frame_complete();
+    pc_input_gameplay_tick();
+    memset(out + 2, 0, 18);
+    pc_input_apply_report(out, 0);
+    CHECK(out[5] == 0);
+    pc_input_test_reset();
+}
+
+static void fire_test_reset(void)
+{
+    _putenv_s("RECOMP_BLACK_INPUT_MODE", "auto");
+    _putenv_s("RECOMP_BLACK_BIND_FIRE", "Mouse1");
+    _putenv_s("RECOMP_INPUT_TRACE", "");
+    _putenv_s("RECOMP_INPUT_SCRIPT", "");
+    _putenv_s("RECOMP_PAD_SCRIPT", "");
+    pc_input_test_reset();
+    pc_input_test_set_time(100000);
+    pc_input_set_control_resolver(test_fire_control);
+}
+
+static unsigned fire_test_report(void)
+{
+    uint8_t out[20] = {0,20};
+    pc_input_apply_report(out, 0);
+    return out[11];
+}
+
+static unsigned aim_test_report(void)
+{
+    uint8_t out[20] = {0,20};
+    pc_input_apply_report(out, 0);
+    return out[10];
+}
+
+static void fire_test_enter_gap(void)
+{
+    pc_input_gameplay_tick();
+    pc_input_frame_complete();
+    pc_input_frame_complete();
+}
+
+#define FIRE_EXPECT(failure_count, expression) do { \
+    ++checks; \
+    if (!(expression)) { \
+        ++(failure_count); \
+        fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #expression); \
+    } \
+} while (0)
+
+static void test_fire_ack_generation_guards(void)
+{
+    const uint32_t fire_bit = 1u << 23;
+    unsigned failures = 0;
+    unsigned check_start = checks;
+    uint64_t token, older_token, newer_token, neutral_token, g2_token, stale_token, overwritten_token;
+    unsigned initial, held, before_neutral, after_neutral, older_observed, newer_observed;
+    unsigned gated_poll, next_press, g2_observed, stale_end_held, stale_ignored_report;
+    unsigned overwritten_end_report, overwritten_neutral, after_overwritten_neutral;
+    unsigned queued_reports[4], drained_neutrals[4], i;
+
+    /* A completed Fire sample acknowledges the hold. Capturing the pointer
+     * must preserve the hold without forgetting that acknowledgement. */
+    fire_test_reset();
+    pc_input_gameplay_tick();
+    pc_input_frame_complete();
+    pc_input_mouse_button_event(0, 1);
+    token = pc_input_native_sample_begin(); /* the press predates this sample */
+    initial = fire_test_report();
+    pc_input_native_sample_end(token, fire_bit);
+    pc_input_capture_changed(1);
+    held = fire_test_report();
+    pc_input_mouse_button_event(0, 0);
+    pc_input_mouse_button_event(0, 1);
+    token = pc_input_native_sample_begin();
+    before_neutral = fire_test_report();
+    pc_input_native_sample_end(token, before_neutral ? fire_bit : 0);
+    after_neutral = fire_test_report();
+    printf("Fire capture acknowledgement: initial=%u held=%u re-press=%u after-neutral=%u\n",
+           initial, held, before_neutral, after_neutral);
+    FIRE_EXPECT(failures, initial == 0xFF);
+    FIRE_EXPECT(failures, held == 0xFF);
+    FIRE_EXPECT(failures, before_neutral == 0);
+    FIRE_EXPECT(failures, after_neutral == 0xFF);
+
+    /* A Fire hold that starts during the short camera/frame gap becomes
+     * acknowledged only when a sample token begins after that press. */
+    fire_test_reset();
+    fire_test_enter_gap();
+    FIRE_EXPECT(failures, !pc_input_gameplay_active());
+    pc_input_mouse_button_event(0, 1);
+    token = pc_input_native_sample_begin(); /* eligible: this token includes the gap hold */
+    initial = fire_test_report();
+    pc_input_native_sample_end(token, fire_bit);
+    pc_input_gameplay_tick();
+    pc_input_mouse_button_event(0, 0);
+    pc_input_mouse_button_event(0, 1);
+    token = pc_input_native_sample_begin();
+    before_neutral = fire_test_report();
+    pc_input_native_sample_end(token, before_neutral ? fire_bit : 0);
+    after_neutral = fire_test_report();
+    printf("Fire gap acknowledgement: initial=%u re-press=%u after-neutral=%u\n",
+           initial, before_neutral, after_neutral);
+    FIRE_EXPECT(failures, initial == 0xFF);
+    FIRE_EXPECT(failures, before_neutral == 0);
+    FIRE_EXPECT(failures, after_neutral == 0xFF);
+
+    /* If the gap hold is released before its eligible sample completes, the
+     * old sample still observed Fire and must establish a neutral barrier. */
+    fire_test_reset();
+    fire_test_enter_gap();
+    pc_input_mouse_button_event(0, 1);
+    token = pc_input_native_sample_begin(); /* includes the first gap hold */
+    initial = fire_test_report();
+    pc_input_mouse_button_event(0, 0);
+    pc_input_native_sample_end(token, initial ? fire_bit : 0);
+    pc_input_mouse_button_event(0, 1);
+    before_neutral = fire_test_report();
+    token = pc_input_native_sample_begin();
+    gated_poll = fire_test_report();
+    pc_input_native_sample_end(token, gated_poll ? fire_bit : 0);
+    after_neutral = fire_test_report();
+    pc_input_mouse_button_event(0, 0);
+    pc_input_mouse_button_event(0, 1);
+    next_press = fire_test_report();
+    printf("Fire gap release-before-end: old-report=%u gated-poll=%u after-neutral=%u next-press=%u\n",
+           initial, gated_poll, after_neutral, next_press);
+    FIRE_EXPECT(failures, initial == 0xFF);
+    FIRE_EXPECT(failures, before_neutral == 0);
+    FIRE_EXPECT(failures, gated_poll == 0);
+    FIRE_EXPECT(failures, after_neutral == 0xFF);
+    FIRE_EXPECT(failures, next_press == 0xFF);
+
+    /* Replacing a gap hold while its sample is still in flight must retain
+     * the old generation long enough to force neutral, without acknowledging
+     * the newer Fire generation from that old sample's RT observation. */
+    fire_test_reset();
+    fire_test_enter_gap();
+    pc_input_mouse_button_event(0, 1);
+    token = pc_input_native_sample_begin(); /* token includes only the first hold */
+    initial = fire_test_report();
+    pc_input_mouse_button_event(0, 0);
+    pc_input_mouse_button_event(0, 1);
+    pc_input_native_sample_end(token, initial ? fire_bit : 0);
+    before_neutral = fire_test_report();
+    token = pc_input_native_sample_begin();
+    gated_poll = fire_test_report();
+    pc_input_native_sample_end(token, gated_poll ? fire_bit : 0);
+    after_neutral = fire_test_report();
+    pc_input_mouse_button_event(0, 0);
+    pc_input_mouse_button_event(0, 1);
+    next_press = fire_test_report();
+    printf("Fire gap re-press-before-end: old-report=%u gated-poll=%u after-neutral=%u next-press=%u\n",
+           initial, gated_poll, after_neutral, next_press);
+    FIRE_EXPECT(failures, initial == 0xFF);
+    FIRE_EXPECT(failures, before_neutral == 0);
+    FIRE_EXPECT(failures, gated_poll == 0);
+    FIRE_EXPECT(failures, after_neutral == 0xFF);
+    FIRE_EXPECT(failures, next_press == 0xFF);
+
+    /* A sample that began before the press cannot acknowledge that press,
+     * even if the later report contains Fire. */
+    fire_test_reset();
+    pc_input_gameplay_tick();
+    pc_input_frame_complete();
+    token = pc_input_native_sample_begin();
+    pc_input_mouse_button_event(0, 1);
+    initial = fire_test_report();
+    pc_input_native_sample_end(token, fire_bit);
+    pc_input_mouse_button_event(0, 0);
+    pc_input_mouse_button_event(0, 1);
+    token = pc_input_native_sample_begin();
+    before_neutral = fire_test_report();
+    pc_input_native_sample_end(token, before_neutral ? fire_bit : 0);
+    printf("Fire press-after-token: first-report=%u re-press=%u\n", initial, before_neutral);
+    FIRE_EXPECT(failures, initial == 0xFF);
+    FIRE_EXPECT(failures, before_neutral == 0xFF);
+
+    /* Leave a sample for the acknowledged first press in flight. After a
+     * neutral poll and a newer press, its late completion must not alias to
+     * the newer generation just because both presses map to the same RT bit. */
+    fire_test_reset();
+    pc_input_gameplay_tick();
+    pc_input_frame_complete();
+    pc_input_mouse_button_event(0, 1);
+    token = pc_input_native_sample_begin();
+    initial = fire_test_report();
+    pc_input_native_sample_end(token, fire_bit);
+    older_token = pc_input_native_sample_begin();
+    older_observed = fire_test_report(); /* captured for the first hold; completion is delayed */
+    pc_input_mouse_button_event(0, 0);
+    pc_input_mouse_button_event(0, 1);
+    token = pc_input_native_sample_begin();
+    before_neutral = fire_test_report();
+    gated_poll = before_neutral;
+    pc_input_native_sample_end(token, before_neutral ? fire_bit : 0);
+    after_neutral = fire_test_report();
+    pc_input_native_sample_end(older_token, older_observed ? fire_bit : 0);
+    held = fire_test_report();
+    pc_input_mouse_button_event(0, 0);
+    pc_input_mouse_button_event(0, 1);
+    next_press = fire_test_report();
+    printf("Fire late older sample: first=%u older-sample=%u gated-poll=%u after-neutral=%u late-end=%u next-press=%u\n",
+           initial, older_observed, gated_poll, after_neutral, held, next_press);
+    FIRE_EXPECT(failures, initial == 0xFF);
+    FIRE_EXPECT(failures, older_observed == 0xFF);
+    FIRE_EXPECT(failures, gated_poll == 0);
+    FIRE_EXPECT(failures, after_neutral == 0xFF);
+    FIRE_EXPECT(failures, held == 0xFF);
+    FIRE_EXPECT(failures, next_press == 0xFF);
+
+    /* Two overlapping native samples can both observe Fire generation 1.
+     * Once the newer sample acknowledges it and generation 2 is later
+     * acknowledged, completing the older duplicate must be harmless. */
+    fire_test_reset();
+    pc_input_gameplay_tick();
+    pc_input_frame_complete();
+    pc_input_mouse_button_event(0, 1);
+    older_token = pc_input_native_sample_begin();
+    older_observed = fire_test_report();
+    newer_token = pc_input_native_sample_begin();
+    newer_observed = fire_test_report();
+    pc_input_native_sample_end(newer_token, newer_observed ? fire_bit : 0);
+    pc_input_mouse_button_event(0, 0);
+    pc_input_mouse_button_event(0, 1);
+    neutral_token = pc_input_native_sample_begin();
+    before_neutral = fire_test_report();
+    pc_input_native_sample_end(neutral_token, before_neutral ? fire_bit : 0);
+    g2_token = pc_input_native_sample_begin();
+    g2_observed = fire_test_report();
+    pc_input_native_sample_end(g2_token, g2_observed ? fire_bit : 0);
+    pc_input_native_sample_end(older_token, older_observed ? fire_bit : 0);
+    stale_end_held = fire_test_report();
+    printf("Fire duplicate snapshot: older=%u newer=%u neutral=%u generation2=%u after-stale-end=%u\n",
+           older_observed, newer_observed, before_neutral, g2_observed, stale_end_held);
+    FIRE_EXPECT(failures, older_observed == 0xFF);
+    FIRE_EXPECT(failures, newer_observed == 0xFF);
+    FIRE_EXPECT(failures, before_neutral == 0);
+    FIRE_EXPECT(failures, g2_observed == 0xFF);
+    FIRE_EXPECT(failures, stale_end_held == 0xFF);
+
+    /* A token more than four sample starts old has been overwritten in the
+     * bounded snapshot ring. Its late end must not act on the newer snapshot
+     * that occupies the same ring slot. */
+    fire_test_reset();
+    pc_input_gameplay_tick();
+    pc_input_frame_complete();
+    pc_input_mouse_button_event(0, 1);
+    stale_token = pc_input_native_sample_begin();
+    older_observed = fire_test_report();
+    for (i = 0; i < 4; ++i) {
+        overwritten_token = pc_input_native_sample_begin();
+        newer_observed = fire_test_report();
+    }
+    pc_input_mouse_button_event(0, 0);
+    pc_input_mouse_button_event(0, 1);
+    pc_input_native_sample_end(stale_token, older_observed ? fire_bit : 0);
+    stale_ignored_report = fire_test_report();
+    pc_input_native_sample_end(overwritten_token, newer_observed ? fire_bit : 0);
+    overwritten_end_report = fire_test_report();
+    neutral_token = pc_input_native_sample_begin();
+    overwritten_neutral = fire_test_report();
+    pc_input_native_sample_end(neutral_token, overwritten_neutral ? fire_bit : 0);
+    after_overwritten_neutral = fire_test_report();
+    printf("Fire overwritten sample ticket: old=%u newer=%u stale-end=%u valid-end=%u neutral=%u next=%u\n",
+           older_observed, newer_observed, stale_ignored_report, overwritten_end_report,
+           overwritten_neutral, after_overwritten_neutral);
+    FIRE_EXPECT(failures, older_observed == 0xFF);
+    FIRE_EXPECT(failures, newer_observed == 0xFF);
+    FIRE_EXPECT(failures, stale_ignored_report == 0xFF);
+    FIRE_EXPECT(failures, overwritten_end_report == 0);
+    FIRE_EXPECT(failures, overwritten_neutral == 0);
+    FIRE_EXPECT(failures, after_overwritten_neutral == 0xFF);
+
+    /* Four queued Aim taps fill the per-source queue; the fifth press remains
+     * physically held without a queue entry. An observed native hold must
+     * still acknowledge it so release/re-press waits for a neutral sample. */
+    _putenv_s("RECOMP_BLACK_BIND_AIM", "Mouse2");
+    fire_test_reset();
+    pc_input_set_control_resolver(test_aim_control);
+    pc_input_gameplay_tick();
+    pc_input_frame_complete();
+    for (i = 0; i < 4; ++i) {
+        pc_input_mouse_button_event(1, 1);
+        pc_input_mouse_button_event(1, 0);
+    }
+    pc_input_mouse_button_event(1, 1); /* fifth press stays physically held */
+    for (i = 0; i < 4; ++i) {
+        neutral_token = pc_input_native_sample_begin();
+        queued_reports[i] = aim_test_report();
+        pc_input_native_sample_end(neutral_token, queued_reports[i] ? 1u << 22 : 0);
+        neutral_token = pc_input_native_sample_begin();
+        drained_neutrals[i] = aim_test_report();
+        pc_input_native_sample_end(neutral_token, drained_neutrals[i] ? 1u << 22 : 0);
+        FIRE_EXPECT(failures, queued_reports[i] == 0xFF);
+        FIRE_EXPECT(failures, drained_neutrals[i] == 0);
+    }
+    neutral_token = pc_input_native_sample_begin();
+    held = aim_test_report();
+    pc_input_native_sample_end(neutral_token, held ? 1u << 22 : 0);
+    pc_input_mouse_button_event(1, 0);
+    pc_input_mouse_button_event(1, 1);
+    neutral_token = pc_input_native_sample_begin();
+    before_neutral = aim_test_report();
+    pc_input_native_sample_end(neutral_token, before_neutral ? 1u << 22 : 0);
+    neutral_token = pc_input_native_sample_begin();
+    after_neutral = aim_test_report();
+    pc_input_native_sample_end(neutral_token, after_neutral ? 1u << 22 : 0);
+    printf("Aim full-queue held acknowledgement: queued=%u,%u,%u,%u neutral=%u,%u,%u,%u fifth-held=%u re-press=%u after-neutral=%u\n",
+           queued_reports[0], queued_reports[1], queued_reports[2], queued_reports[3],
+           drained_neutrals[0], drained_neutrals[1], drained_neutrals[2], drained_neutrals[3],
+           held, before_neutral, after_neutral);
+    FIRE_EXPECT(failures, held == 0xFF);
+    FIRE_EXPECT(failures, before_neutral == 0);
+    FIRE_EXPECT(failures, after_neutral == 0xFF);
+    _putenv_s("RECOMP_BLACK_BIND_AIM", "");
+
+    printf("Fire acknowledgement generation: %u checks, %u failures\n",
+           checks - check_start, failures);
+    CHECK(failures == 0);
+}
+
+#undef FIRE_EXPECT
+
 static char ini_path[MAX_PATH + 32];
 static unsigned hook_calls, hook_w, hook_h, hook_ow, hook_oh;
 static void hook(unsigned w, unsigned h, unsigned ow, unsigned oh) { hook_calls++; hook_w = w; hook_h = h; hook_ow = ow; hook_oh = oh; }
@@ -730,6 +1140,8 @@ int main(void)
     CHECK(n > 0 && n < MAX_PATH);
     snprintf(ini_path + n, 32, "pc_video_test_%lu.ini", (unsigned long)GetCurrentProcessId());
     test_model();
+    test_sustained_fire_survives_gameplay_gap();
+    test_fire_ack_generation_guards();
     test_ambient_occlusion();
     test_environment_and_file();
     test_menu();
