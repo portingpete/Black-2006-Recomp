@@ -3338,9 +3338,10 @@ index caef326..161c0eb 100644
  target_include_directories(xbox_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 diff --git a/src/input/pc_input.c b/src/input/pc_input.c
 new file mode 100644
+index 0000000..4ceb323
 --- /dev/null
 +++ b/src/input/pc_input.c
-@@ -0,0 +1,1395 @@
+@@ -0,0 +1,1461 @@
 +/*
 + * pc_input.c -- native keyboard and mouse for BLACK. See pc_input.h for the design.
 + *
@@ -3386,6 +3387,7 @@ new file mode 100644
 +#define PC_GAMEPLAY_MS 400              /* startup fallback and evidence for a new movement hold in a frame gap */
 +#define PC_PENDING_MS 5000             /* safety expiry for a stalled/disconnected native consumer */
 +#define PC_PENDING_MAX 4               /* bounded distinct presses awaiting native samples */
++#define PC_NATIVE_SAMPLE_MAX 4         /* bounded snapshots; stale completions cannot acknowledge new input */
 +#define PC_SWALLOW_MS 250               /* mouse presses right after (re)focus are not the game's */
 +
 +/* BLACK's 28 controls (names table at 0x2AC290). */
@@ -3573,6 +3575,14 @@ new file mode 100644
 +static unsigned char s_pending_count[SRC_COUNT], s_pending_pulse_count[CTL_COUNT_BUTTONS];
 +static unsigned char s_source_context[SRC_COUNT];
 +static uint32_t s_source_ack[SRC_COUNT];
++static uint64_t s_source_generation[SRC_COUNT];
++typedef struct PcNativeSample {
++    uint64_t token, press_generation;
++    uint64_t held_generation[SRC_COUNT];
++    uint32_t held_controls[SRC_COUNT];
++} PcNativeSample;
++static PcNativeSample s_native_samples[PC_NATIVE_SAMPLE_MAX];
++static uint64_t s_native_sample_generation;
 +static volatile LONG64 s_press_generation;
 +static volatile LONG s_native_authority, s_neutral_barrier;
 +static volatile LONG s_active_device = -1;           /* PcDevice, or -1 until something has happened */
@@ -3730,6 +3740,8 @@ new file mode 100644
 +    }
 +    memset(s_pending_count, 0, sizeof(s_pending_count));
 +    memset(s_source_ack, 0, sizeof(s_source_ack));
++    memset(s_source_generation, 0, sizeof(s_source_generation));
++    memset(s_native_samples, 0, sizeof(s_native_samples));
 +    s_neutral_barrier &= keep_focus_pause ? 1L << CTL_START : 0;
 +    s_dx = s_dy = 0;
 +    s_swallow_mask = 0;
@@ -3826,13 +3838,15 @@ new file mode 100644
 +
 +/* Caller holds s_pending_lock. A second tap waits for an observed neutral sample,
 + * so it can create a distinct native rising edge rather than extending the first. */
-+static void pending_push(PcPending *queue, unsigned char *count, uint64_t now, int context)
++static uint64_t pending_push(PcPending *queue, unsigned char *count, uint64_t now, int context)
 +{
-+    if (*count == PC_PENDING_MAX) return;
-+    queue[*count].generation = (uint64_t)InterlockedIncrement64(&s_press_generation);
++    const uint64_t generation = (uint64_t)InterlockedIncrement64(&s_press_generation);
++    if (*count == PC_PENDING_MAX) return generation;
++    queue[*count].generation = generation;
 +    queue[*count].until = now + PC_PENDING_MS;
 +    queue[*count].context = context;
 +    ++*count;
++    return generation;
 +}
 +
 +static void set_src(unsigned id, int down, uint64_t now, int latch_ms)
@@ -3847,7 +3861,8 @@ new file mode 100644
 +        s_source_ack[id] = 0;
 +        /* A tentative gap press is only a physical hold. If released before
 +         * gameplay returns, it must not become a delayed movement tap. */
-+        if (!provisional) pending_push(s_pending[id], &s_pending_count[id], now, context);
++        s_source_generation[id] = provisional ? (uint64_t)InterlockedIncrement64(&s_press_generation) :
++            pending_push(s_pending[id], &s_pending_count[id], now, context);
 +    } else if (!down && s_down[id] && s_native_authority && s_source_ack[id]) {
 +        InterlockedOr(&s_neutral_barrier, (LONG)s_source_ack[id]);
 +        s_latch[id] = 0;
@@ -4185,8 +4200,8 @@ new file mode 100644
 +            if (keep_gameplay_hold) trace("mouse button %d gameplay hold preserved across pointer capture", b + 1);
 +            if (s_down[source] && !keep_gameplay_hold) mask |= 1L << b;
 +            s_pending_count[source] = 0;
-+            s_source_ack[source] = 0;
 +            if (!keep_gameplay_hold) {
++                s_source_ack[source] = 0;
 +                s_down[source] = 0;
 +                s_latch[source] = 0; /* a menu press must not leak into gameplay as a shot */
 +            }
@@ -4339,9 +4354,32 @@ new file mode 100644
 +
 +uint64_t pc_input_native_sample_begin(void)
 +{
++    PcNativeSample *sample;
++    const uint64_t now = now_ms();
++    uint64_t token;
++    int gameplay;
++    unsigned id;
 +    pc_input_init();
 +    InterlockedExchange(&s_native_authority, 1);
-+    return (uint64_t)InterlockedCompareExchange64(&s_press_generation, 0, 0);
++    gameplay = pc_input_gameplay_active();
++    AcquireSRWLockExclusive(&s_pending_lock);
++    sample = &s_native_samples[(++s_native_sample_generation) % PC_NATIVE_SAMPLE_MAX];
++    memset(sample, 0, sizeof(*sample));
++    sample->token = s_native_sample_generation;
++    token = sample->token;
++    sample->press_generation = (uint64_t)s_press_generation;
++    /* Remember unacknowledged physical holds independently of input latches.
++     * Their release during decode must force neutral, never replay a tap. */
++    for (id = 0; id < SRC_COUNT; ++id) {
++        const int source_gameplay = gameplay ||
++            (s_source_context[id] == 1 && gameplay_hold_gap_context(id, now));
++        if (!s_down[id] || s_source_ack[id] ||
++            (s_source_context[id] != 2 && s_source_context[id] != source_gameplay)) continue;
++        sample->held_generation[id] = s_source_generation[id];
++        sample->held_controls[id] = source_controls(id, source_gameplay);
++    }
++    ReleaseSRWLockExclusive(&s_pending_lock);
++    return token;
 +}
 +
 +void pc_input_native_sample_end(uint64_t token, uint32_t observed_controls)
@@ -4349,21 +4387,32 @@ new file mode 100644
 +    const uint64_t now = now_ms();
 +    const int gameplay = pc_input_gameplay_active();
 +    uint32_t submitted = 0, cancelled = 0;
++    unsigned char source_gameplay[SRC_COUNT];
 +    unsigned id;
 +    int control;
++    PcNativeSample *sample;
++    uint64_t press_generation;
 +    AcquireSRWLockExclusive(&s_pending_lock);
++    sample = &s_native_samples[token % PC_NATIVE_SAMPLE_MAX];
++    if (!token || sample->token != token) { ReleaseSRWLockExclusive(&s_pending_lock); return; }
++    press_generation = sample->press_generation;
 +    /* A released button must actually reach neutral before the next queued
 +     * press can create a second native edge. Never mask a physical pad. */
 +    InterlockedAnd(&s_neutral_barrier, (LONG)observed_controls);
 +    for (id = 0; id < SRC_COUNT; ++id) {
++        /* A recent gameplay hold reports gameplay controls even if the next
++         * camera update has not arrived. Acknowledge the same map it emitted. */
++        source_gameplay[id] = (unsigned char)(gameplay || (s_down[id] && s_source_context[id] == 1 &&
++                                                          gameplay_hold_gap_context(id, now)));
 +        while (s_pending_count[id] &&
 +            (s_pending[id][0].until <= now ||
-+             (s_pending[id][0].context != 2 && s_pending[id][0].context != gameplay)))
++             (s_pending[id][0].context != 2 && s_pending[id][0].context != source_gameplay[id])))
 +            pending_pop(s_pending[id], &s_pending_count[id]);
-+        if ((s_pending_count[id] && s_pending[id][0].generation <= token) ||
-+            (s_down[id] && !s_pending_count[id] &&
-+             (s_source_context[id] == 2 || s_source_context[id] == gameplay)))
-+            submitted |= source_controls(id, gameplay);
++        if ((s_pending_count[id] && s_pending[id][0].generation <= press_generation) ||
++            (s_down[id] && !s_pending_count[id] && s_source_generation[id] && s_source_generation[id] <= press_generation &&
++             (s_source_context[id] == 2 || s_source_context[id] == source_gameplay[id])))
++            submitted |= source_controls(id, source_gameplay[id]);
++        submitted |= sample->held_controls[id];
 +    }
 +    /* Opposing keys deliberately produce a neutral axis. Acknowledge that
 +     * observed neutral too, so two released opposing taps cannot stay stuck. */
@@ -4373,13 +4422,29 @@ new file mode 100644
 +    }
 +    for (id = 0; id < SRC_COUNT; ++id) {
 +        uint32_t required;
-+        if (!s_pending_count[id] || s_pending[id][0].generation > token) continue;
-+        required = source_controls(id, gameplay);
++        uint64_t generation;
++        unsigned sample_id;
++        const int queued = s_pending_count[id] && s_pending[id][0].generation <= press_generation;
++        const int held = !queued && sample->held_generation[id];
++        if (!queued && !held) continue;
++        generation = queued ? s_pending[id][0].generation : sample->held_generation[id];
++        required = queued ? source_controls(id, source_gameplay[id]) : sample->held_controls[id];
 +        if (required & (uint32_t)s_neutral_barrier) continue;
 +        if ((observed_controls & (required & ~cancelled)) != (required & ~cancelled)) continue;
-+        pending_pop(s_pending[id], &s_pending_count[id]);
-+        s_source_ack[id] = required;
-+        if (!s_down[id] || s_pending_count[id]) {
++        if (queued) pending_pop(s_pending[id], &s_pending_count[id]);
++        /* Overlapping decodes may snapshot the same press. Once acknowledged,
++         * none of those older observations may force another neutral frame. */
++        for (sample_id = 0; sample_id < PC_NATIVE_SAMPLE_MAX; ++sample_id) {
++            PcNativeSample *older = &s_native_samples[sample_id];
++            if (older->held_generation[id] && older->held_generation[id] <= generation) {
++                older->held_generation[id] = 0;
++                older->held_controls[id] = 0;
++            }
++        }
++        /* An older queued press must not acknowledge a newer physical hold,
++         * including a provisional press that has no queue entry of its own. */
++        if (generation == s_source_generation[id]) s_source_ack[id] = required;
++        if (!s_down[id] || s_pending_count[id] || generation != s_source_generation[id]) {
 +            s_latch[id] = 0;
 +            InterlockedOr(&s_neutral_barrier, (LONG)(required & ~cancelled));
 +        }
@@ -4387,13 +4452,14 @@ new file mode 100644
 +    for (control = 0; control < CTL_COUNT_BUTTONS; ++control) {
 +        while (s_pending_pulse_count[control] && s_pending_pulse[control][0].until <= now)
 +            pending_pop(s_pending_pulse[control], &s_pending_pulse_count[control]);
-+        if (!s_pending_pulse_count[control] || s_pending_pulse[control][0].generation > token ||
++        if (!s_pending_pulse_count[control] || s_pending_pulse[control][0].generation > press_generation ||
 +            ((uint32_t)s_neutral_barrier & (1u << control)) ||
 +            !(observed_controls & (1u << control))) continue;
 +        pending_pop(s_pending_pulse[control], &s_pending_pulse_count[control]);
 +        s_pulse[control] = 0;
 +        InterlockedOr(&s_neutral_barrier, 1L << control);
 +    }
++    sample->token = 0;
 +    ReleaseSRWLockExclusive(&s_pending_lock);
 +}
 +
@@ -4723,6 +4789,7 @@ new file mode 100644
 +    s_frame_authority = s_gameplay_seen = s_gameplay_active = s_focus_pause_guard = 0;
 +    s_native_authority = s_neutral_barrier = 0;
 +    s_press_generation = 0;
++    s_native_sample_generation = 0;
 +    s_active_device = -1;
 +    s_pad_streak = 0;
 +    s_focused = 1;
@@ -4738,10 +4805,10 @@ new file mode 100644
 +void pc_input_test_set_layout_labels(int layout_aware) { s_layout_labels = layout_aware; }
 diff --git a/src/input/pc_input.h b/src/input/pc_input.h
 new file mode 100644
-index 0000000..70ead0c
+index 0000000..b6b60ec
 --- /dev/null
 +++ b/src/input/pc_input.h
-@@ -0,0 +1,206 @@
+@@ -0,0 +1,207 @@
 +/*
 + * pc_input.h -- native keyboard and mouse for BLACK.
 + *
@@ -4886,11 +4953,10 @@ index 0000000..70ead0c
 +void pc_input_set_gameplay_blocked_query(int (*blocked)(void));
 +/* One validated native completed frame, independent of UI presentation.
 + * An unblocked frame without a camera tick suspends gameplay controls but keeps
-+ * physically held movement-only keyboard bindings for the next gameplay tick.
-+ * New movement holds within 400 ms of focused camera evidence wait for that
-+ * tick too, without entering the menu layer or retaining released taps.
-+ * Pending taps and mouse/action holds are discarded; pause/movie/focus loss
-+ * discards movement holds too. */
++ * physically held movement and Fire bindings. Within 400 ms of focused camera
++ * evidence, those holds still report gameplay controls without entering the
++ * menu layer or retaining released taps. Other pending taps/action holds are
++ * discarded; pause/movie/focus loss discards movement and Fire holds too. */
 +void pc_input_frame_complete(void);
 +
 +/* ---- the pad report (OHCI thread) ------------------------------------------------------------- */
@@ -4898,8 +4964,10 @@ index 0000000..70ead0c
 +/* `out` holds the 20-byte report built from the host pad (or neutral when `pad_present` is 0).
 + * Applies the input mode, merges the keyboard and mouse buttons, and tracks pad activity. */
 +void pc_input_apply_report(uint8_t out[20], int pad_present);
-+/* The primary native decoder brackets its real sample. Only pending presses
-+ * present before begin and observed in the 24 native down booleans are retired. */
++/* The primary native decoder brackets its real sample with an opaque token.
++ * Only presses present before begin and observed in the 24 native down booleans
++ * are acknowledged. Snapshots retain released holds without replaying taps;
++ * a completion older than four sample starts is safely ignored. */
 +uint64_t pc_input_native_sample_begin(void);
 +void pc_input_native_sample_end(uint64_t token, uint32_t observed_controls);
 +
