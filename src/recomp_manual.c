@@ -1049,6 +1049,10 @@ recomp_func_t recomp_lookup_manual(uint32_t xbox_va)
     for (i = 0; i < g_itrace_n; i++)
         if (g_itrace_va[i] == xbox_va)
             return g_itrace_wrappers[i];
+    /* This XBE thunk shares the implementation of the discovered 0x0020B3B0
+     * async worker thunk. Keep the missing-file recovery callback resolvable. */
+    if (xbox_va == 0x0020B6D0u)
+        return recomp_lookup(0x0020B3B0u);
     return (recomp_func_t)0;
 }
 
