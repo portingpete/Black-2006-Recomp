@@ -13,6 +13,100 @@
 static unsigned checks;
 #define CHECK(e) do { checks++; if (!(e)) { fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #e); exit(1); } } while (0)
 
+static int test_fire_control(int slot) { return slot == 9 ? 23 : slot == 11 ? 17 : -1; }
+
+static void test_sustained_fire_survives_gameplay_gap(void)
+{
+    uint8_t out[20] = {0,20};
+    uint64_t token;
+    int i;
+    _putenv_s("RECOMP_BLACK_INPUT_MODE", "auto");
+    _putenv_s("RECOMP_BLACK_BIND_FIRE", "Mouse1");
+    _putenv_s("RECOMP_INPUT_TRACE", "");
+    _putenv_s("RECOMP_INPUT_SCRIPT", "");
+    _putenv_s("RECOMP_PAD_SCRIPT", "");
+    pc_input_test_reset();
+    pc_input_test_set_time(100000);
+    pc_input_set_control_resolver(test_fire_control);
+    pc_input_gameplay_tick();
+    CHECK(pc_input_gameplay_active());
+    pc_input_mouse_button_event(0, 1);
+    pc_input_apply_report(out, 0);
+    CHECK(out[11] == 0xFF && out[4] == 0);
+    pc_input_frame_complete();
+    pc_input_frame_complete(); /* a rendered frame completed before the next camera update */
+    memset(out + 2, 0, 18);
+    pc_input_apply_report(out, 0); /* the USB poll can land in the camera-update gap */
+    CHECK(out[11] == 0xFF && out[4] == 0);
+    pc_input_gameplay_tick();
+    memset(out + 2, 0, 18);
+    pc_input_apply_report(out, 0);
+    CHECK(out[11] == 0xFF && out[4] == 0);
+    for (i = 0; i < 20; ++i) {
+        pc_input_frame_complete();
+        memset(out + 2, 0, 18);
+        pc_input_apply_report(out, 0);
+        CHECK(out[11] == 0xFF && out[4] == 0);
+        pc_input_frame_complete();
+        memset(out + 2, 0, 18);
+        pc_input_apply_report(out, 0);
+        CHECK(out[11] == 0xFF && out[4] == 0);
+        pc_input_gameplay_tick();
+        memset(out + 2, 0, 18);
+        pc_input_apply_report(out, 0);
+        CHECK(out[11] == 0xFF && out[4] == 0);
+    }
+    pc_input_frame_complete(); /* the current frame was consumed by the renderer */
+    pc_input_frame_complete(); /* a later frame completed without a gameplay camera tick */
+    pc_input_test_set_time(100300); /* a short update gap must not expire held Fire */
+    memset(out + 2, 0, 18);
+    pc_input_apply_report(out, 0);
+    CHECK(out[11] == 0xFF && out[4] == 0);
+    pc_input_test_set_time(100000);
+    pc_input_mouse_button_event(0, 0);
+    memset(out + 2, 0, 18);
+    pc_input_apply_report(out, 0);
+    CHECK(out[11] == 0 && out[4] == 0);
+
+    /* Taking mouse capture during an accepted gameplay hold must not turn
+     * that hold into a menu click or cut automatic fire off after one burst. */
+    pc_input_test_reset();
+    pc_input_test_set_time(100000);
+    pc_input_set_control_resolver(test_fire_control);
+    pc_input_gameplay_tick();
+    token = pc_input_native_sample_begin();
+    pc_input_mouse_button_event(0, 1);
+    memset(out + 2, 0, 18);
+    pc_input_apply_report(out, 0);
+    CHECK(out[11] == 0xFF && out[4] == 0);
+    pc_input_native_sample_end(token, 1u << 23);
+    pc_input_frame_complete();
+    pc_input_capture_changed(1);
+    memset(out + 2, 0, 18);
+    pc_input_apply_report(out, 0);
+    CHECK(out[11] == 0xFF && out[4] == 0);
+    pc_input_mouse_button_event(0, 0);
+    memset(out + 2, 0, 18);
+    pc_input_apply_report(out, 0);
+    CHECK(out[11] == 0 && out[4] == 0);
+
+    pc_input_test_reset();
+    pc_input_test_set_time(100000);
+    pc_input_set_control_resolver(test_fire_control);
+    pc_input_gameplay_tick();
+    pc_input_key_event(0x13, 0, 1, 0); /* R is a discrete reload action. */
+    memset(out + 2, 0, 18);
+    pc_input_apply_report(out, 0);
+    CHECK(out[5] == 0xFF);
+    pc_input_frame_complete();
+    pc_input_frame_complete();
+    pc_input_gameplay_tick();
+    memset(out + 2, 0, 18);
+    pc_input_apply_report(out, 0);
+    CHECK(out[5] == 0);
+    pc_input_test_reset();
+}
+
 static char ini_path[MAX_PATH + 32];
 static unsigned hook_calls, hook_w, hook_h, hook_ow, hook_oh;
 static void hook(unsigned w, unsigned h, unsigned ow, unsigned oh) { hook_calls++; hook_w = w; hook_h = h; hook_ow = ow; hook_oh = oh; }
@@ -730,6 +824,7 @@ int main(void)
     CHECK(n > 0 && n < MAX_PATH);
     snprintf(ini_path + n, 32, "pc_video_test_%lu.ini", (unsigned long)GetCurrentProcessId());
     test_model();
+    test_sustained_fire_survives_gameplay_gap();
     test_ambient_occlusion();
     test_environment_and_file();
     test_menu();
