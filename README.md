@@ -16,7 +16,11 @@ Ambient occlusion adds contact shading from scene depth with **SSAO Classic,
 HBAO, HBAO+, and GTAO**, each with Low, Medium, High, and Ultra quality. Choose
 the method and quality on the launcher's **Graphics** tab or the in-game
 **Video Settings > Graphics** page. AO defaults to **Off**, with **High** quality
-selected for when it is enabled. The controls and help text are in English.
+selected for when it is enabled. The launcher's labels and help follow the
+selected menu language. The in-game **Video Settings > Graphics** page also
+localizes its tabs, setting names, values, and help text between English and
+Brazilian Portuguese.
+
 These are local implementations of the techniques; HBAO+ does not use the
 vendor SDK. The [AO regression tests](tests/ambient_occlusion/README.md) exercise
 the actual shaders, settings, launcher controls, and native camera hook without
@@ -73,6 +77,18 @@ Leave **Skip movies** and **Advance startup menus automatically** unchecked to
 watch the full opening and navigate manually. Local settings live in `local/`,
 saves in `save/`, and diagnostic logs in `reports/`. Close the game before
 removing the project folder; retain `save/` if you want to keep your progress.
+
+The launcher's **Game > Menu language** setting chooses English or Brazilian
+Portuguese for both the launcher and game, and is saved in
+`local/xbox-launcher.json`. Before each run, the launcher installs the selected
+bank at `game/language/strings/MainUS.bin` and passes that language to the game.
+Keep the source banks at `local/language-banks/en-US/MainUS.bin` and
+`local/language-banks/pt-BR/MainUS.bin`; `local/` is excluded from Git. The
+launcher defaults to English when the setting is new or invalid.
+
+The opening cutscene subtitles are in `subtitles/03_N.srt` (English) and
+`subtitles/pt-BR/03_N.srt` (Brazilian Portuguese). The runtime selects the file
+from the launcher language. Supply the corresponding audio/game files yourself.
 
 AO requires the GPU renderer. Every quality uses a full-resolution R8 mask and
 depth-aware blur; higher quality increases sampling density and radius. AO
