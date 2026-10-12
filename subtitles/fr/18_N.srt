@@ -16,7 +16,7 @@ Sergent Kellar: Je ne crois pas non plus aux coïncidences.
 
 5
 00:00:14,000 --> 00:00:17,000
-Sergent Kellar: Ils avaient raison à votre sujet, Kellar.
+Interrogateur: Ils avaient raison à votre sujet, Kellar.
 
 6
 00:00:17,000 --> 00:00:19,000
@@ -24,7 +24,7 @@ Interrogateur: Raison à quel sujet ?
 
 7
 00:00:19,000 --> 00:00:22,000
-Sergent Kellar: Votre prévisibilité. Vous avez fait tout ce que les psychologues avaient prédit.
+Interrogateur: Votre prévisibilité. Vous avez fait tout ce que les psychologues avaient prédit.
 
 8
 00:00:22,000 --> 00:00:25,000

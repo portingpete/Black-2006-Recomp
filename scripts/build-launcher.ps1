@@ -20,11 +20,24 @@ if (-not (Test-Path -LiteralPath $languageSource)) { throw 'The launcher languag
 if (-not (Test-Path -LiteralPath $uiLanguageSource)) { throw 'The launcher UI language source is missing.' }
 if (-not (Test-Path -LiteralPath $localeCatalog)) { throw 'The generated launcher locale catalog is missing.' }
 
-$python = Get-Command python -ErrorAction SilentlyContinue
-if (-not $python) { $python = Get-Command py -ErrorAction SilentlyContinue }
+$python = $null
+$pythonArgs = @()
+$pythonLauncher = Get-Command py -ErrorAction SilentlyContinue
+if ($pythonLauncher) {
+    $pythonVersion = & $pythonLauncher.Source -3 --version 2>&1
+    if ($LASTEXITCODE -eq 0 -and ($pythonVersion -join ' ') -match 'Python 3\.') {
+        $python = $pythonLauncher
+        $pythonArgs = @('-3')
+    }
+}
+if (-not $python) {
+    $pythonCandidate = Get-Command python -ErrorAction SilentlyContinue
+    if ($pythonCandidate) {
+        $pythonVersion = & $pythonCandidate.Source --version 2>&1
+        if ($LASTEXITCODE -eq 0 -and ($pythonVersion -join ' ') -match 'Python 3\.') { $python = $pythonCandidate }
+    }
+}
 if ($python) {
-    $pythonArgs = @()
-    if ($python.Name -eq 'py.exe') { $pythonArgs = @('-3') }
     if ((Test-Path -LiteralPath $launcherKeys) -and (Test-Path -LiteralPath $catalogBuilder)) {
         & $python.Source @pythonArgs $catalogBuilder $launcherKeys $launcherCatalogDir $localeCatalog
         if ($LASTEXITCODE -ne 0) { throw 'Could not generate launcher locale catalogs.' }

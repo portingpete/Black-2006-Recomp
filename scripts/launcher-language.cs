@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.IO;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
@@ -11,6 +12,10 @@ namespace BlackXboxLauncher
     {
         private static string current = GameLanguageBanks.English;
         private static Dictionary<string, Dictionary<string, string>> generatedCatalogs;
+        private static readonly Dictionary<string, Dictionary<string, string>> translationsByLanguage =
+            new Dictionary<string, Dictionary<string, string>>(System.StringComparer.Ordinal);
+        private static readonly Dictionary<string, Regex> matchersByLanguage =
+            new Dictionary<string, Regex>(System.StringComparer.Ordinal);
 
         private static Dictionary<string, Dictionary<string, string>> GeneratedCatalogs
         {
@@ -287,30 +292,39 @@ namespace BlackXboxLauncher
 
         internal static string Text(string english)
         {
-            string translated;
             if (english == null || current == GameLanguageBanks.English) return english;
-            Dictionary<string, string> generated;
-            if (GeneratedCatalogs.TryGetValue(current, out generated))
+            Dictionary<string, string> translations;
+            Regex matcher;
+            if (!translationsByLanguage.TryGetValue(current, out translations))
             {
-                if (generated.TryGetValue(english, out translated)) return translated;
-                foreach (KeyValuePair<string, string> entry in generated.OrderByDescending(pair => pair.Key.Length))
-                    if (!System.String.IsNullOrEmpty(entry.Key) && english.IndexOf(entry.Key, System.StringComparison.Ordinal) >= 0)
-                        english = english.Replace(entry.Key, entry.Value);
+                Dictionary<string, string> catalog = current == GameLanguageBanks.PortugueseBrazil ? portuguese :
+                    current == GameLanguageBanks.Spanish ? spanish : current == GameLanguageBanks.French ? french :
+                    current == GameLanguageBanks.German ? german : current == GameLanguageBanks.Italian ? italian : null;
+                Dictionary<string, string> generated;
+                GeneratedCatalogs.TryGetValue(current, out generated);
+                if ((generated == null || generated.Count == 0) && (catalog == null || catalog.Count == 0)) return english;
+
+                translations = new Dictionary<string, string>(System.StringComparer.Ordinal);
+                if (catalog != null)
+                    foreach (KeyValuePair<string, string> entry in catalog) translations[entry.Key] = entry.Value;
+                if (generated != null)
+                    foreach (KeyValuePair<string, string> entry in generated) translations[entry.Key] = entry.Value;
+                translationsByLanguage[current] = translations;
+                string[] keys = translations.Keys.Where(key => !System.String.IsNullOrEmpty(key))
+                    .OrderByDescending(key => key.Length).ToArray();
+                if (keys.Length == 0) return english;
+                matcher = new Regex(System.String.Join("|", keys.Select(Regex.Escape).ToArray()), RegexOptions.CultureInvariant);
+                matchersByLanguage[current] = matcher;
             }
-            Dictionary<string, string> catalog = current == GameLanguageBanks.PortugueseBrazil ? portuguese :
-                current == GameLanguageBanks.Spanish ? spanish : current == GameLanguageBanks.French ? french :
-                current == GameLanguageBanks.German ? german : current == GameLanguageBanks.Italian ? italian : null;
-            if (catalog == null) return english;
-            if (catalog.TryGetValue(english, out translated)) return translated;
-            foreach (KeyValuePair<string, string> entry in catalog.OrderByDescending(pair => pair.Key.Length))
-                if (english.IndexOf(entry.Key, System.StringComparison.Ordinal) >= 0)
-                    english = english.Replace(entry.Key, entry.Value);
-            return english;
+            string translated;
+            if (translations.TryGetValue(english, out translated)) return translated;
+            if (!matchersByLanguage.TryGetValue(current, out matcher)) return english;
+            return matcher.Replace(english, match => translations[match.Value]);
         }
 
         internal static void Apply(Control parent)
         {
-            if (!(parent is ComboBox))
+            if (!(parent is ComboBox) && !(parent is TextBoxBase) && !(parent is UpDownBase))
             {
                 if (parent.Tag == null) parent.Tag = parent.Text;
                 string english = parent.Tag as string;

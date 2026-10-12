@@ -16,7 +16,7 @@ Sargento Kellar: Yo tampoco creo en las coincidencias.
 
 5
 00:00:14,000 --> 00:00:17,000
-Sargento Kellar: Tenían razón contigo, Kellar.
+Interrogador: Tenían razón contigo, Kellar.
 
 6
 00:00:17,000 --> 00:00:19,000
@@ -24,7 +24,7 @@ Interrogador: ¿En qué tenían razón?
 
 7
 00:00:19,000 --> 00:00:22,000
-Sargento Kellar: Tu previsibilidad. Hiciste todo lo que los psicólogos dijeron que harías.
+Interrogador: Tu previsibilidad. Hiciste todo lo que los psicólogos dijeron que harías.
 
 8
 00:00:22,000 --> 00:00:25,000

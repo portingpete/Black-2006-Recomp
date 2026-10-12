@@ -16,7 +16,7 @@ Sergente Kellar: Neanche io credo alle coincidenze.
 
 5
 00:00:14,000 --> 00:00:17,000
-Sergente Kellar: Avevano ragione su di te, Kellar.
+Interrogatore: Avevano ragione su di te, Kellar.
 
 6
 00:00:17,000 --> 00:00:19,000
@@ -24,7 +24,7 @@ Interrogatore: Su cosa avevano ragione?
 
 7
 00:00:19,000 --> 00:00:22,000
-Sergente Kellar: Sul fatto che sei prevedibile. Hai fatto tutto quello che gli psicologi avevano previsto.
+Interrogatore: Sul fatto che sei prevedibile. Hai fatto tutto quello che gli psicologi avevano previsto.
 
 8
 00:00:22,000 --> 00:00:25,000

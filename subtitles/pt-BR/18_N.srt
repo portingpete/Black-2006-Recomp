@@ -16,7 +16,7 @@ Sargento Kellar: Eu também não acredito em coincidências.
 
 5
 00:00:14,000 --> 00:00:17,000
-Sargento Kellar: Eles tinham razão a seu respeito, Kellar.
+Interrogador: Eles tinham razão a seu respeito, Kellar.
 
 6
 00:00:17,000 --> 00:00:19,000
@@ -24,7 +24,7 @@ Interrogador: Certo a respeito de quê?
 
 7
 00:00:19,000 --> 00:00:22,000
-Sargento Kellar: Sua previsibilidade. Você fez tudo o que os psicólogos previram que faria.
+Interrogador: Sua previsibilidade. Você fez tudo o que os psicólogos previram que faria.
 
 8
 00:00:22,000 --> 00:00:25,000

@@ -16,7 +16,7 @@ Sgt. Kellar: I don't believe in coincidences either.
 
 5
 00:00:14,000 --> 00:00:17,000
-Sgt. Kellar: They were right about you, Kellar.
+Interrogator: They were right about you, Kellar.
 
 6
 00:00:17,000 --> 00:00:19,000
@@ -24,7 +24,7 @@ Interrogator: Right about what?
 
 7
 00:00:19,000 --> 00:00:22,000
-Sgt. Kellar: Your predictability. You did everything the psychologists said you'd do.
+Interrogator: Your predictability. You did everything the psychologists said you'd do.
 
 8
 00:00:22,000 --> 00:00:25,000

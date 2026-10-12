@@ -16,7 +16,7 @@ Sergeant Kellar: Ich glaube auch nicht an Zufälle.
 
 5
 00:00:14,000 --> 00:00:17,000
-Sergeant Kellar: Sie hatten recht mit dir, Kellar.
+Vernehmer: Sie hatten recht mit dir, Kellar.
 
 6
 00:00:17,000 --> 00:00:19,000
@@ -24,7 +24,7 @@ Vernehmer: Womit hatten sie recht?
 
 7
 00:00:19,000 --> 00:00:22,000
-Sergeant Kellar: Damit, wie berechenbar du bist. Du hast alles getan, was die Psychologen vorhergesagt hatten.
+Vernehmer: Damit, wie berechenbar du bist. Du hast alles getan, was die Psychologen vorhergesagt hatten.
 
 8
 00:00:22,000 --> 00:00:25,000
