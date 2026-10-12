@@ -11,7 +11,9 @@ namespace BlackXboxLauncher
     internal static class LauncherLanguage
     {
         private static string current = GameLanguageBanks.English;
-        private static Dictionary<string, Dictionary<string, string>> generatedCatalogs;
+        private static readonly object languageCacheLock = new object();
+        private static readonly System.Lazy<Dictionary<string, Dictionary<string, string>>> generatedCatalogs =
+            new System.Lazy<Dictionary<string, Dictionary<string, string>>>(LoadGeneratedCatalogs);
         private static readonly Dictionary<string, Dictionary<string, string>> translationsByLanguage =
             new Dictionary<string, Dictionary<string, string>>(System.StringComparer.Ordinal);
         private static readonly Dictionary<string, Regex> matchersByLanguage =
@@ -19,22 +21,28 @@ namespace BlackXboxLauncher
 
         private static Dictionary<string, Dictionary<string, string>> GeneratedCatalogs
         {
-            get
+            get { return generatedCatalogs.Value; }
+        }
+
+        private static Dictionary<string, Dictionary<string, string>> LoadGeneratedCatalogs()
+        {
+            var catalogs = new Dictionary<string, Dictionary<string, string>>();
+            try
             {
-                if (generatedCatalogs != null) return generatedCatalogs;
-                generatedCatalogs = new Dictionary<string, Dictionary<string, string>>();
                 using (Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("BlackXboxLauncher.launcher-locales.json"))
                 {
-                    if (stream == null) return generatedCatalogs;
+                    if (stream == null) return catalogs;
                     using (StreamReader reader = new StreamReader(stream))
                     {
                         var serializer = new JavaScriptSerializer();
-                        generatedCatalogs = serializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(reader.ReadToEnd())
-                            ?? new Dictionary<string, Dictionary<string, string>>();
+                        var loaded = serializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(reader.ReadToEnd());
+                        if (loaded != null) catalogs = loaded;
                     }
                 }
-                return generatedCatalogs;
             }
+            catch (System.InvalidOperationException) { }
+            catch (IOException) { }
+            return catalogs;
         }
         private static readonly Dictionary<string, string> spanish = new Dictionary<string, string>
         {
@@ -295,35 +303,38 @@ namespace BlackXboxLauncher
             if (english == null || current == GameLanguageBanks.English) return english;
             Dictionary<string, string> translations;
             Regex matcher;
-            if (!translationsByLanguage.TryGetValue(current, out translations))
+            lock (languageCacheLock)
             {
-                Dictionary<string, string> catalog = current == GameLanguageBanks.PortugueseBrazil ? portuguese :
-                    current == GameLanguageBanks.Spanish ? spanish : current == GameLanguageBanks.French ? french :
-                    current == GameLanguageBanks.German ? german : current == GameLanguageBanks.Italian ? italian : null;
-                Dictionary<string, string> generated;
-                GeneratedCatalogs.TryGetValue(current, out generated);
-                if ((generated == null || generated.Count == 0) && (catalog == null || catalog.Count == 0)) return english;
+                if (!translationsByLanguage.TryGetValue(current, out translations))
+                {
+                    Dictionary<string, string> catalog = current == GameLanguageBanks.PortugueseBrazil ? portuguese :
+                        current == GameLanguageBanks.Spanish ? spanish : current == GameLanguageBanks.French ? french :
+                        current == GameLanguageBanks.German ? german : current == GameLanguageBanks.Italian ? italian : null;
+                    Dictionary<string, string> generated;
+                    GeneratedCatalogs.TryGetValue(current, out generated);
+                    if ((generated == null || generated.Count == 0) && (catalog == null || catalog.Count == 0)) return english;
 
-                translations = new Dictionary<string, string>(System.StringComparer.Ordinal);
-                if (catalog != null)
-                    foreach (KeyValuePair<string, string> entry in catalog) translations[entry.Key] = entry.Value;
-                if (generated != null)
-                    foreach (KeyValuePair<string, string> entry in generated) translations[entry.Key] = entry.Value;
-                translationsByLanguage[current] = translations;
-                string[] keys = translations.Keys.Where(key => !System.String.IsNullOrEmpty(key))
-                    .OrderByDescending(key => key.Length).ToArray();
-                if (keys.Length == 0) return english;
-                string[] patterns = keys.Select(key =>
-                    (System.Char.IsLetterOrDigit(key[0]) || key[0] == '_' ? @"(?<![\p{L}\p{N}_])" : "") +
-                    Regex.Escape(key) +
-                    (System.Char.IsLetterOrDigit(key[key.Length - 1]) || key[key.Length - 1] == '_' ? @"(?![\p{L}\p{N}_])" : "")
-                ).ToArray();
-                matcher = new Regex(System.String.Join("|", patterns), RegexOptions.CultureInvariant);
-                matchersByLanguage[current] = matcher;
+                    translations = new Dictionary<string, string>(System.StringComparer.Ordinal);
+                    if (catalog != null)
+                        foreach (KeyValuePair<string, string> entry in catalog) translations[entry.Key] = entry.Value;
+                    if (generated != null)
+                        foreach (KeyValuePair<string, string> entry in generated) translations[entry.Key] = entry.Value;
+                    translationsByLanguage[current] = translations;
+                    string[] keys = translations.Keys.Where(key => !System.String.IsNullOrEmpty(key))
+                        .OrderByDescending(key => key.Length).ToArray();
+                    if (keys.Length == 0) return english;
+                    string[] patterns = keys.Select(key =>
+                        (System.Char.IsLetterOrDigit(key[0]) || key[0] == '_' ? @"(?<![\p{L}\p{N}_])" : "") +
+                        Regex.Escape(key) +
+                        (System.Char.IsLetterOrDigit(key[key.Length - 1]) || key[key.Length - 1] == '_' ? @"(?![\p{L}\p{N}_])" : "")
+                    ).ToArray();
+                    matcher = new Regex(System.String.Join("|", patterns), RegexOptions.CultureInvariant);
+                    matchersByLanguage[current] = matcher;
+                }
+                else if (!matchersByLanguage.TryGetValue(current, out matcher)) return english;
             }
             string translated;
             if (translations.TryGetValue(english, out translated)) return translated;
-            if (!matchersByLanguage.TryGetValue(current, out matcher)) return english;
             return matcher.Replace(english, match => translations[match.Value]);
         }
 

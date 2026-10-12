@@ -42,7 +42,7 @@ Lieutenant MacCarver: La première fois que j'ai entendu le nom de William Lenno
 11
 00:00:38,000 --> 00:00:42,000
 Lieutenant MacCarver: Lennox était spécialiste des opérations clandestines.
-Assassin [SFOR / S4?].
+Un assassin.
 
 12
 00:00:42,000 --> 00:00:46,000
@@ -98,7 +98,7 @@ Interrogateur: [Quelles étaient vos missions pour l'opération suivante ?]
 
 25
 00:01:27,000 --> 00:01:35,000
-Sergent Kellar: McCarver voulait établir un axe de progression depuis l'est. Le plan consistait à traverser le cimetière en bordure de Naszran et à attaquer l'aciérie de l'autre côté.
+Sergent Kellar: MacCarver voulait établir un axe de progression depuis l'est. Le plan consistait à traverser le cimetière en bordure de Naszran et à attaquer l'aciérie de l'autre côté.
 
 26
 00:01:35,000 --> 00:01:39,000

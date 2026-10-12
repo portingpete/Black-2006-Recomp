@@ -57,6 +57,17 @@ class Pr12ReviewFixes(unittest.TestCase):
         self.assertIn("Estendi riempie la finestra.", help_text)
         self.assertNotIn("Allunga riempie la finestra.", help_text)
 
+    def test_cutscene_subtitles_do_not_show_unresolved_translator_notes(self):
+        for path in (ROOT / "subtitles").rglob("07_N.srt"):
+            text = path.read_text(encoding="utf-8-sig")
+            self.assertNotIn("[SFOR / S4?]", text, str(path))
+
+    def test_french_cutscene_uses_one_spelling_for_mac_carver(self):
+        path = ROOT / "subtitles" / "fr" / "07_N.srt"
+        text = path.read_text(encoding="utf-8-sig")
+        self.assertNotIn("McCarver", text)
+        self.assertIn("MacCarver voulait", text)
+
 
 if __name__ == "__main__":
     unittest.main()
