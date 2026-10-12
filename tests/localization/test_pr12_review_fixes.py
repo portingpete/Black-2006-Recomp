@@ -50,6 +50,13 @@ class Pr12ReviewFixes(unittest.TestCase):
             for cue in (5, 7):
                 self.assertTrue(subtitle_cue(path, cue).startswith(speaker + ": "), f"{path}, cue {cue}")
 
+    def test_italian_scaling_help_uses_the_matching_launcher_term(self):
+        path = ROOT / "localization" / "launcher" / "it.jsonl"
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        help_text = next(row["text"] for row in rows if row["id"] == "0029")
+        self.assertIn("Estendi riempie la finestra.", help_text)
+        self.assertNotIn("Allunga riempie la finestra.", help_text)
+
 
 if __name__ == "__main__":
     unittest.main()

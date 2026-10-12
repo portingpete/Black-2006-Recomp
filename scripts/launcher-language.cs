@@ -313,7 +313,12 @@ namespace BlackXboxLauncher
                 string[] keys = translations.Keys.Where(key => !System.String.IsNullOrEmpty(key))
                     .OrderByDescending(key => key.Length).ToArray();
                 if (keys.Length == 0) return english;
-                matcher = new Regex(System.String.Join("|", keys.Select(Regex.Escape).ToArray()), RegexOptions.CultureInvariant);
+                string[] patterns = keys.Select(key =>
+                    (System.Char.IsLetterOrDigit(key[0]) || key[0] == '_' ? @"(?<![\p{L}\p{N}_])" : "") +
+                    Regex.Escape(key) +
+                    (System.Char.IsLetterOrDigit(key[key.Length - 1]) || key[key.Length - 1] == '_' ? @"(?![\p{L}\p{N}_])" : "")
+                ).ToArray();
+                matcher = new Regex(System.String.Join("|", patterns), RegexOptions.CultureInvariant);
                 matchersByLanguage[current] = matcher;
             }
             string translated;

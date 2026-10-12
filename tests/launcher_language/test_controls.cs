@@ -44,6 +44,11 @@ namespace BlackXboxLauncher
                 check(LauncherLanguage.Text("Status: Any XInput controller works as before.") ==
                     "Status: Cualquier mando XInput funciona como antes.",
                     "Applying a generated locale does not rewrite English fragments inside translated output.");
+                check(LauncherLanguage.Text("Status: Gamepad 1 and XInput are supported.") ==
+                    "Status: Gamepad 1 and XInput are supported.",
+                    "Fallback translations do not replace English fragments inside unmatched words.");
+                check(LauncherLanguage.Text("Input") == "Entrada",
+                    "Whole-word fallback translation still handles a standalone key.");
 
                 using (var form = new LauncherForm(project, true))
                 {
