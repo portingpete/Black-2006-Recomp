@@ -36245,10 +36245,9 @@ index 0000000..15dfe54
 +#endif
 diff --git a/src/video/pc_menu.c b/src/video/pc_menu.c
 new file mode 100644
-index 0000000..82e56e62c681d55a48ab1bcf9cf0146e8f4ca103
 --- /dev/null
 +++ b/src/video/pc_menu.c
-@@ -0,0 +1,2403 @@
+@@ -0,0 +1,2433 @@
 +/* Native, editable menus. See pc_menu.h.
 + *
 + * The page logic follows the menu classes the game's own pages are written with (BkMenuList,
@@ -37435,33 +37434,52 @@ index 0000000..82e56e62c681d55a48ab1bcf9cf0146e8f4ca103
 +    out[n] = 0;
 +}
 +
-+static int portuguese_menu_language(void)
++static int pc_menu_locale(void)
 +{
 +    const char *language = getenv("RECOMP_LANGUAGE");
-+    return language && !_stricmp(language, "pt-BR");
++    if (!language || !_stricmp(language, "en-US")) return 0;
++    if (!_stricmp(language, "pt-BR")) return 1;
++    if (!_stricmp(language, "es")) return 2;
++    if (!_stricmp(language, "fr")) return 3;
++    if (!_stricmp(language, "de")) return 4;
++    if (!_stricmp(language, "it")) return 5;
++    return 0;
 +}
 +
 +static const char *localized_video_literal(const char *text)
 +{
 +    const char *active_page = m_page >= 0 && m_doc ? m_doc->page[m_page].name : m_page_name;
-+    static const struct { const char *english, *portuguese; } words[] = {
-+        { "VIDEO SETTINGS", "CONFIGURAÇÕES DE VÍDEO" }, { "DISPLAY", "TELA" },
-+        { "GRAPHICS", "GRÁFICOS" }, { "RESET TO DEFAULTS", "RESTAURAR PADRÕES" },
-+        { "BACK", "VOLTAR" }, { "WINDOW MODE", "MODO DE JANELA" },
-+        { "WINDOW SIZE", "RESOLUÇÃO" }, { "INTERNAL RESOLUTION", "RESOLUÇÃO INTERNA" },
-+        { "ASPECT RATIO", "PROPORÇÃO DA IMAGEM" }, { "SCALING", "ESCALA DA IMAGEM" },
-+        { "SCALING FILTER", "FILTRO DE ESCALA" }, { "VERTICAL SYNC", "SINCRONIZAÇÃO VERTICAL" },
-+        { "FRAME LIMIT", "LIMITE DE QUADROS" }, { "ANTI-ALIASING", "SUAVIZAÇÃO DE SERRILHADO" },
-+        { "ANISOTROPIC FILTERING", "FILTRAGEM ANISOTRÓPICA" }, { "DEPTH OF FIELD", "PROFUNDIDADE DE CAMPO" },
-+        { "SHARPENING", "NITIDEZ" }, { "AMBIENT OCCLUSION", "OCLUSÃO DE AMBIENTE" },
-+        { "AO QUALITY", "QUALIDADE DA OCLUSÃO" }, { "FIELD OF VIEW", "FOV" },
-+        { "MOTION BLUR", "DESFOQUE DE MOVIMENTO" }
++    int locale = pc_menu_locale();
++    static const struct { const char *english, *pt, *es, *fr, *de, *it; } words[] = {
++        { "VIDEO SETTINGS", "CONFIGURAÇÕES DE VÍDEO", "AJUSTES DE VÍDEO", "PARAMÈTRES VIDÉO", "VIDEOEINSTELLUNGEN", "IMPOSTAZIONI VIDEO" },
++        { "DISPLAY", "TELA", "PANTALLA", "AFFICHAGE", "ANZEIGE", "SCHERMO" },
++        { "GRAPHICS", "GRÁFICOS", "GRÁFICOS", "GRAPHIQUES", "GRAFIK", "GRAFICA" },
++        { "RESET TO DEFAULTS", "RESTAURAR PADRÕES", "RESTABLECER VALORES", "RÉINITIALISER", "ZURÜCKSETZEN", "RIPRISTINA PREDEFINITI" },
++        { "BACK", "VOLTAR", "ATRÁS", "RETOUR", "ZURÜCK", "INDIETRO" },
++        { "WINDOW MODE", "MODO DE JANELA", "MODO DE VENTANA", "MODE FENÊTRÉ", "FENSTERMODUS", "MODALITÀ FINESTRA" },
++        { "WINDOW SIZE", "RESOLUÇÃO", "RESOLUCIÓN", "RÉSOLUTION", "AUFLÖSUNG", "RISOLUZIONE" },
++        { "INTERNAL RESOLUTION", "RESOLUÇÃO INTERNA", "RESOLUCIÓN INTERNA", "RÉSOLUTION INTERNE", "INTERNE AUFLÖSUNG", "RISOLUZIONE INTERNA" },
++        { "ASPECT RATIO", "PROPORÇÃO", "RELACIÓN DE ASPECTO", "FORMAT D’IMAGE", "BILDFORMAT", "PROPORZIONI" },
++        { "SCALING", "ESCALA DA IMAGEM", "ESCALADO", "MISE À L’ÉCHELLE", "SKALIERUNG", "RIDIMENSIONAMENTO" },
++        { "SCALING FILTER", "FILTRO DE ESCALA", "FILTRO DE ESCALADO", "FILTRE DE MISE À L’ÉCHELLE", "SKALIERUNGSFILTER", "FILTRO DI RIDIMENSIONAMENTO" },
++        { "VERTICAL SYNC", "SINCRONIZAÇÃO VERTICAL", "SINCRONIZACIÓN VERTICAL", "SYNCHRONISATION VERTICALE", "VERTIKALE SYNCHRONISIERUNG", "SINCRONIZZAZIONE VERTICALE" },
++        { "FRAME LIMIT", "LIMITE DE QUADROS", "LÍMITE DE FPS", "LIMITE D’IMAGES/S", "BILDERLIMIT", "LIMITE FPS" },
++        { "ANTI-ALIASING", "SUAVIZAÇÃO DE SERRILHADO", "SUAVIZADO", "ANTICRÉNELAGE", "ANTIALIASING", "ANTIALIASING" },
++        { "ANISOTROPIC FILTERING", "FILTRAGEM ANISOTRÓPICA", "FILTRADO ANISOTRÓPICO", "FILTRAGE ANISOTROPE", "ANISOTROPE FILTERUNG", "FILTRO ANISOTROPICO" },
++        { "DEPTH OF FIELD", "PROFUNDIDADE DE CAMPO", "PROFUNDIDAD DE CAMPO", "PROFONDEUR DE CHAMP", "SCHÄRFENTIEFE", "PROFONDITÀ DI CAMPO" },
++        { "SHARPENING", "NITIDEZ", "NITIDEZ", "NETTETÉ", "SCHÄRFEN", "NITIDEZZA" },
++        { "AMBIENT OCCLUSION", "OCLUSÃO DE AMBIENTE", "OCLUSIÓN AMBIENTAL", "OCCLUSION AMBIANTE", "UMGEBUNGSVERDECKUNG", "OCCLUSIONE AMBIENTALE" },
++        { "AO QUALITY", "QUALIDADE DA OCLUSÃO", "CALIDAD DE OCLUSIÓN", "QUALITÉ DE L’OCCLUSION", "AO-QUALITÄT", "QUALITÀ AO" },
++        { "FIELD OF VIEW", "FOV", "CAMPO DE VISIÓN", "CHAMP DE VISION", "SICHTFELD", "CAMPO VISIVO" },
++        { "MOTION BLUR", "DESFOQUE DE MOVIMENTO", "DESENFOQUE DE MOVIMIENTO", "FLOU DE MOUVEMENT", "BEWEGUNGSUNSCHÄRFE", "MOSSO DI MOVIMENTO" }
 +    };
 +    int i;
-+    if (!portuguese_menu_language() ||
-+        (_stricmp(active_page, "VideoSettings") && _stricmp(active_page, "VideoDisplay") && _stricmp(active_page, "VideoGraphics"))) return text;
++    if (!locale || (_stricmp(active_page, "VideoSettings") && _stricmp(active_page, "VideoDisplay") && _stricmp(active_page, "VideoGraphics"))) return text;
 +    for (i = 0; i < (int)(sizeof(words) / sizeof(words[0])); ++i)
-+        if (!strcmp(text, words[i].english)) return words[i].portuguese;
++        if (!strcmp(text, words[i].english)) {
++            const char *values[] = { words[i].english, words[i].pt, words[i].es, words[i].fr, words[i].de, words[i].it };
++            return values[locale];
++        }
 +    return text;
 +}
 +
@@ -38502,9 +38520,20 @@ index 0000000..82e56e62c681d55a48ab1bcf9cf0146e8f4ca103
 +    if (overlay_changed) {
 +        static Display d;
 +        static const uint16_t english_skip_text[] = { 'P','r','e','s','s',' ','a','g','a','i','n',' ','t','o',' ','s','k','i','p',0 };
-+        static const uint16_t portuguese_skip_text[] = { 'P','R','E','S','S','I','O','N','E',' ','N','O','V','A','M','E','N','T','E',' ','P','A','R','A',' ','P','U','L','A','R',0 };
 +        const char *language = getenv("RECOMP_LANGUAGE");
-+        const uint16_t *text = language && !_stricmp(language, "pt-BR") ? portuguese_skip_text : english_skip_text;
++        const char *skip_text = "Press again to skip";
++        uint16_t localized_skip_text[64];
++        const uint16_t *text = english_skip_text;
++        if (language && !_stricmp(language, "pt-BR")) skip_text = "PRESSIONE NOVAMENTE PARA PULAR";
++        else if (language && !_stricmp(language, "es")) skip_text = "PULSA DE NUEVO PARA OMITIR";
++        else if (language && !_stricmp(language, "fr")) skip_text = "APPUYEZ À NOUVEAU POUR PASSER";
++        else if (language && !_stricmp(language, "de")) skip_text = "ZUM ÜBERSPRINGEN ERNEUT DRÜCKEN";
++        else if (language && !_stricmp(language, "it")) skip_text = "PREMI DI NUOVO PER SALTARE";
++        if (language && (_stricmp(language, "pt-BR") == 0 || _stricmp(language, "es") == 0 ||
++                         _stricmp(language, "fr") == 0 || _stricmp(language, "de") == 0 || _stricmp(language, "it") == 0)) {
++            if (MultiByteToWideChar(CP_UTF8, 0, skip_text, -1, (WCHAR *)localized_skip_text, 64) > 0)
++                text = localized_skip_text;
++        }
 +        Canvas c;
 +        float right, bottom, tw;
 +        d.n = 0; d.slide = 0;
@@ -38976,7 +39005,7 @@ new file mode 100644
 index 0000000..04e3d8a
 --- /dev/null
 +++ b/src/video/pc_movie_skip.c
-@@ -0,0 +1,363 @@
+@@ -0,0 +1,367 @@
 +/* BLACK's native XMV input. Decoder ownership and EOF stay with the guest. */
 +#include "pc_movie_skip.h"
 +#include "pc_menu.h"
@@ -39114,7 +39143,11 @@ index 0000000..04e3d8a
 +    char line[1024];
 +    char subtitle_path[MAX_PATH];
 +    const char *language = getenv("RECOMP_LANGUAGE");
-+    const char *directory = language && !_stricmp(language, "pt-BR") ? "subtitles\\pt-BR\\" : "subtitles\\";
++    const char *directory = language && !_stricmp(language, "pt-BR") ? "subtitles\\pt-BR\\" :
++        language && !_stricmp(language, "es") ? "subtitles\\es\\" :
++        language && !_stricmp(language, "fr") ? "subtitles\\fr\\" :
++        language && !_stricmp(language, "de") ? "subtitles\\de\\" :
++        language && !_stricmp(language, "it") ? "subtitles\\it\\" : "subtitles\\";
 +    m_subtitle_loaded = 1;
 +    m_caption_count = 0;
 +    if (!m_subtitle_target || !m_subtitle_stem[0] ||
