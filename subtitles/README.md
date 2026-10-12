@@ -1,6 +1,6 @@
 # BLACK cutscene captions
 
-`03_N.srt` is the English subtitle track. `pt-BR/03_N.srt` contains its Brazilian Portuguese translation. The runtime displays the track that matches the launcher's **Game > Menu language** setting while the game's `03_N` cutscene is active. Keep both files under the project's `subtitles/` folder.
+This folder contains English and Brazilian Portuguese subtitle tracks for nine spoken cutscenes: `03_N`, `05_N`, `07_N`, `09_N`, `11_N`, `13_N`, `15_N`, `17_N`, and `18_N`. The launcher language selects English (`subtitles/<stem>.srt`) or Brazilian Portuguese (`subtitles/pt-BR/<stem>.srt`). The runtime only loads these allowlisted stems while their matching XMV is active.
 
 The wording and speech intervals come from the process audio capture in `captures/level0-difficulty-intro-20261009-235725.wav`. Cue times are relative to the movie session. The launcher log places the movie start roughly 1.5 seconds after the capture trigger, so that offset was subtracted from the capture times. This is an initial alignment estimate; the next in-game playback should be used to make any final timing adjustment.
 
