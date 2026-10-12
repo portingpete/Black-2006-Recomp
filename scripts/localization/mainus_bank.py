@@ -81,7 +81,8 @@ class MainUSBank:
         cursor = len(output)
         for index, record in enumerate(self.records[:self.indexed_count]):
             struct.pack_into("<I", output, self.table_offset + index * 4, cursor)
-            cursor = self._write_record(output, record.record_id, translations[record.record_id])
+            pad = index + 1 < len(self.records)
+            cursor = self._write_record(output, record.record_id, translations[record.record_id], pad)
         tail_records = self.records[self.indexed_count:]
         for index, record in enumerate(tail_records):
             pad = index + 1 < len(tail_records)

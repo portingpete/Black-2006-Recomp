@@ -55,4 +55,8 @@ add_test(NAME movie-input COMMAND movie-input-test)
 add_test(NAME movie-overlay COMMAND movie-overlay-test)
 add_test(NAME movie-wrapper COMMAND movie-wrapper-test)
 add_test(NAME movie-prompt-localization COMMAND movie-prompt-localization-test)
-set_tests_properties(movie-input movie-overlay movie-wrapper movie-prompt-localization PROPERTIES TIMEOUT 15)
+add_test(NAME movie-subtitle-catalog
+    COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/validate_subtitle_catalog.py"
+        --root "${CMAKE_CURRENT_SOURCE_DIR}/../..")
+set_tests_properties(movie-input movie-overlay movie-wrapper movie-prompt-localization movie-subtitle-catalog PROPERTIES TIMEOUT 15)

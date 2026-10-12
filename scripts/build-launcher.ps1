@@ -11,6 +11,7 @@ $launcherKeys = Join-Path $projectRoot 'localization\launcher\en-pt-BR.jsonl'
 $launcherCatalogDir = Join-Path $projectRoot 'localization\launcher'
 $catalogBuilder = Join-Path $PSScriptRoot 'localization\build_launcher_catalog.py'
 $bankBuilder = Join-Path $PSScriptRoot 'localization\build_mainus.py'
+$bankBootstrap = Join-Path $PSScriptRoot 'localization\prepare_english_bank.ps1'
 $englishBank = Join-Path $projectRoot 'local\language-banks\en-US\MainUS.bin'
 $gameCatalogDir = Join-Path $projectRoot 'localization\game'
 $output = Join-Path $projectRoot 'BLACK PC Launcher.exe'
@@ -42,6 +43,10 @@ if ($python) {
         & $python.Source @pythonArgs $catalogBuilder $launcherKeys $launcherCatalogDir $localeCatalog
         if ($LASTEXITCODE -ne 0) { throw 'Could not generate launcher locale catalogs.' }
     }
+    # Setup builds the launcher before its first run. Preserve the retail source
+    # now so newly offered locales can be generated on that first setup too.
+    . $bankBootstrap
+    Initialize-EnglishLanguageBank -InstalledBank (Join-Path $projectRoot 'game\language\strings\MainUS.bin') -EnglishBank $englishBank
     if (Test-Path -LiteralPath $englishBank) {
         foreach ($locale in @('es', 'fr', 'de', 'it')) {
             $catalog = Join-Path $gameCatalogDir ($locale + '.jsonl')

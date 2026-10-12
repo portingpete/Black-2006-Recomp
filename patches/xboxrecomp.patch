@@ -36247,7 +36247,7 @@ diff --git a/src/video/pc_menu.c b/src/video/pc_menu.c
 new file mode 100644
 --- /dev/null
 +++ b/src/video/pc_menu.c
-@@ -0,0 +1,2433 @@
+@@ -0,0 +1,2484 @@
 +/* Native, editable menus. See pc_menu.h.
 + *
 + * The page logic follows the menu classes the game's own pages are written with (BkMenuList,
@@ -38480,14 +38480,47 @@ new file mode 100644
 +/* The hint is a separate layer: its pixels never enter the cached page pixels, so hiding it
 + * restores exactly the page underneath. A change to this layer invalidates the whole upload;
 + * ordinary pages retain their existing small dirty regions while the hint is hidden. */
++#define PCM_CAPTION_ROWS 5
++
++/* Wrap at the last fitting space; split an overlong word without losing characters. */
++static unsigned caption_rows(const uint16_t *text, uint16_t rows[PCM_CAPTION_ROWS][PCM_TEXT_CAP], float limit)
++{
++    unsigned count = 0, at = 0;
++    memset(rows, 0, sizeof(uint16_t) * PCM_CAPTION_ROWS * PCM_TEXT_CAP);
++    while (text[at] && count < PCM_CAPTION_ROWS) {
++        unsigned start, n = 0, space = 0;
++        while (text[at] == ' ' || text[at] == '\t') ++at;
++        if (!text[at]) break;
++        start = at;
++        while (text[at] && text[at] != '\n' && text[at] != '\r' && n + 1 < PCM_TEXT_CAP) {
++            rows[count][n++] = text[at];
++            rows[count][n] = 0;
++            if (n > 1 && text_width(PCM_FONT_SMALL, rows[count], 17.0f) > limit) {
++                rows[count][--n] = 0;
++                if (space) { n = space; at = start + space + 1; }
++                break;
++            }
++            if (text[at] == ' ' || text[at] == '\t') space = n - 1;
++            ++at;
++        }
++        while (n && (rows[count][n - 1] == ' ' || rows[count][n - 1] == '\t')) --n;
++        rows[count][n] = 0;
++        if (text[at] == '\r') ++at;
++        if (text[at] == '\n') ++at;
++        ++count;
++    }
++    return count;
++}
++
 +int pc_menu_overlay(unsigned w, unsigned h, int px, int py, unsigned pw, unsigned ph, const uint32_t **pixels, int *changed)
 +{
 +    static uint32_t *hint, *composed;
-+    static uint16_t previous_caption[PCM_TEXT_CAP];
++    static uint16_t previous_caption[PC_MOVIE_SUBTITLE_CHARS];
++    static int caption_rect[4];
 +    static unsigned hw, hh;
 +    static int overlay_was_on, hint_was_on, base_was_on, caption_was_on;
 +    const uint32_t *base = NULL;
-+    uint16_t caption[PCM_TEXT_CAP];
++    uint16_t caption[PC_MOVIE_SUBTITLE_CHARS];
 +    int base_changed = 0, overlay_changed = 0, caption_changed;
 +    const int base_on = page_overlay(w, h, px, py, pw, ph, &base, &base_changed);
 +    int hint_on = InterlockedCompareExchange(&m_movie_skip_prompt, 0, 0) && w && h && pw && ph &&
@@ -38495,8 +38528,13 @@ new file mode 100644
 +    int subtitle_on;
 +    memset(caption, 0, sizeof(caption));
 +    subtitle_on = w && h && pw && ph && m_font[PCM_FONT_SMALL].pixels &&
-+                  pc_movie_skip_subtitle(caption, PCM_TEXT_CAP);
++                  pc_movie_skip_subtitle(caption, PC_MOVIE_SUBTITLE_CHARS);
 +    caption_changed = subtitle_on != caption_was_on || memcmp(caption, previous_caption, sizeof(caption)) != 0;
++    if (subtitle_on && (caption_rect[0] != px || caption_rect[1] != py ||
++                        caption_rect[2] != (int)pw || caption_rect[3] != (int)ph)) {
++        overlay_changed = 1;
++        caption_rect[0] = px; caption_rect[1] = py; caption_rect[2] = (int)pw; caption_rect[3] = (int)ph;
++    }
 +    if (caption_changed) memcpy(previous_caption, caption, sizeof(caption));
 +    caption_was_on = subtitle_on;
 +    if ((hint_on || subtitle_on) && (hw != w || hh != h || !hint || !composed)) {
@@ -38546,28 +38584,41 @@ new file mode 100644
 +            rect(&d, right - tw - 20.0f, bottom - 30.0f, tw + 20.0f, 30.0f, 0xCC101010u, 0);
 +            text_prim(&d, PCM_FONT_SMALL, right - tw - 10.0f, bottom - 23.0f, 16.0f, 1.0f, 0xFFE5E5E5u, text);
 +        }
-+        if (subtitle_on) {
-+            uint16_t rows[2][PCM_TEXT_CAP];
-+            unsigned row = 0, pos = 0, i;
-+            float widths[2] = {0, 0}, box_w, box_y;
-+            memset(rows, 0, sizeof(rows));
-+            for (i = 0; caption[i] && row < 2; ++i) {
-+                if (caption[i] == '\n' || caption[i] == '\r') {
-+                    if (caption[i] == '\r' && caption[i + 1] == '\n') ++i;
-+                    if (row == 0) { ++row; pos = 0; }
-+                } else if (pos + 1 < PCM_TEXT_CAP) rows[row][pos++] = caption[i];
-+            }
-+            for (i = 0; i < 2; ++i) widths[i] = text_width(PCM_FONT_SMALL, rows[i], 17.0f);
-+            box_w = fmaxf(widths[0], widths[1]) + 28.0f;
-+            if (box_w > 600.0f) box_w = 600.0f;
-+            box_y = 480.0f - (row ? 64.0f : 42.0f) - 14.0f;
-+            rect(&d, 320.0f - box_w * 0.5f, box_y, box_w, row ? 58.0f : 36.0f, 0xB8000000u, 0);
-+            text_prim(&d, PCM_FONT_SMALL, 320.0f - widths[0] * 0.5f, box_y + 8.0f,
-+                      17.0f, 1.0f, 0xFFFFFFFFu, rows[0]);
-+            if (row) text_prim(&d, PCM_FONT_SMALL, 320.0f - widths[1] * 0.5f, box_y + 30.0f,
-+                               17.0f, 1.0f, 0xFFFFFFFFu, rows[1]);
-+        }
 +        render(&d, hint, w, h, 0, 0, w, h);
++        if (subtitle_on) {
++            uint16_t rows[PCM_CAPTION_ROWS][PCM_TEXT_CAP];
++            float widths[PCM_CAPTION_ROWS], box_w = 0, box_y, centre, limit, caption_bottom;
++            unsigned count, i;
++            /* Captions belong to the displayed picture; the hint keeps its client anchor. */
++            canvas_for(&c, hint, w, h, px, py, pw, ph);
++            limit = ((float)(c.cr - c.cl) / c.s) - 68.0f;
++            if (limit < 1.0f) limit = 1.0f;
++            count = caption_rows(caption, rows, limit);
++            centre = (((float)c.cl + (float)c.cr) * 0.5f - c.ox) / c.s;
++            for (i = 0; i < count; ++i) {
++                widths[i] = text_width(PCM_FONT_SMALL, rows[i], 17.0f);
++                box_w = fmaxf(box_w, widths[i]);
++            }
++            box_w += 28.0f;
++            caption_bottom = (float)c.cb - 14.0f * c.s;
++            if (hint_on) {
++                Canvas client;
++                canvas_for(&client, hint, w, h, 0, 0, w, h);
++                caption_bottom = fminf(caption_bottom, (float)h - 50.0f * client.s - 8.0f * c.s);
++            }
++            box_y = (caption_bottom - c.oy) / c.s - (22.0f * count + 14.0f);
++            d.n = 0;
++            rect(&d, centre - box_w * 0.5f, box_y, box_w, 22.0f * count + 14.0f, 0xB8000000u, 0);
++            for (i = 0; i < count; ++i)
++                text_prim(&d, PCM_FONT_SMALL, centre - widths[i] * 0.5f, box_y + 7.0f + 22.0f * i,
++                          17.0f, 1.0f, 0xFFFFFFFFu, rows[i]);
++            /* Draw onto the hint layer without render_region's clearing pass. */
++            for (i = 0; i < (unsigned)d.n; ++i) {
++                const Prim *p = &d.prim[i];
++                if (p->type == PR_RECT) draw_rect(&c, p, 0);
++                else draw_text(&c, p, 0);
++            }
++        }
 +    }
 +    *changed = base_changed || overlay_changed || base_on != base_was_on;
 +    if (base_on) {
@@ -39002,10 +39053,9 @@ index 0000000..6affd56
 +}
 diff --git a/src/video/pc_movie_skip.c b/src/video/pc_movie_skip.c
 new file mode 100644
-index 0000000..04e3d8a
 --- /dev/null
 +++ b/src/video/pc_movie_skip.c
-@@ -0,0 +1,367 @@
+@@ -0,0 +1,370 @@
 +/* BLACK's native XMV input. Decoder ownership and EOF stay with the guest. */
 +#include "pc_movie_skip.h"
 +#include "pc_menu.h"
@@ -39034,7 +39084,7 @@ index 0000000..04e3d8a
 +static char m_subtitle_stem[16];
 +static int m_focused = 1;
 +#define PC_MOVIE_CAPTIONS 64
-+#define PC_MOVIE_CAPTION_CHARS 160
++#define PC_MOVIE_CAPTION_CHARS PC_MOVIE_SUBTITLE_CHARS
 +typedef struct MovieCaption { uint64_t start, end; uint16_t text[PC_MOVIE_CAPTION_CHARS]; } MovieCaption;
 +static MovieCaption m_captions[PC_MOVIE_CAPTIONS];
 +static unsigned m_caption_count;
@@ -39378,15 +39428,15 @@ index 0000000..04e3d8a
 +#endif
 diff --git a/src/video/pc_movie_skip.h b/src/video/pc_movie_skip.h
 new file mode 100644
-index 0000000..5023deb
 --- /dev/null
 +++ b/src/video/pc_movie_skip.h
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,26 @@
 +#ifndef XBOXRECOMP_PC_MOVIE_SKIP_H
 +#define XBOXRECOMP_PC_MOVIE_SKIP_H
 +#include <stdint.h>
 +
 +enum { PC_MOVIE_SKIP_NONE, PC_MOVIE_SKIP_INTRO, PC_MOVIE_SKIP_CUTSCENE };
++#define PC_MOVIE_SUBTITLE_CHARS 256
 +
 +/* Game thread: refresh a playing movie's identity each pump. Zero playing or NONE
 + * retires it. A new identity always starts with an unarmed confirmation. */

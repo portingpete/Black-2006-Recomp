@@ -119,9 +119,10 @@ Portuguese, Spanish, French, German, or Italian for both the launcher and game,
 and is saved in `local/xbox-launcher.json`. Spanish, French, German, and Italian
 are marked as machine-draft translations and still need fluent-speaker review.
 Before each run, the launcher installs the selected bank at
-`game/language/strings/MainUS.bin` and passes that language to the game. On the
-first launch, it preserves the recognized original English bank at
-`local/language-banks/en-US/MainUS.bin` before applying another language. If the
+`game/language/strings/MainUS.bin` and passes that language to the game. The
+launcher build preserves the recognized original English bank at
+`local/language-banks/en-US/MainUS.bin` and generates the four new language banks
+on a fresh setup. The launcher also preserves English before applying another language. If the
 installed bank was previously translated or changed and no English copy exists,
 restore the original English `MainUS.bin` from supported retail files to that
 source path before launching. The reference English bank SHA-256 is

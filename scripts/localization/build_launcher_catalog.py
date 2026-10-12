@@ -28,7 +28,11 @@ def main():
             mapping[original["text"]] = localized["text"]
         result[locale] = mapping
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    rendered = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
+    # The launcher build uses this file's timestamp to decide whether to compile.
+    # Leave a byte-identical generated resource untouched on repeated builds.
+    if not args.output.exists() or args.output.read_text(encoding="utf-8") != rendered:
+        args.output.write_text(rendered, encoding="utf-8")
     print(f"Wrote {sum(len(entries) for entries in result.values())} launcher translations in {len(result)} locales")
 
 
