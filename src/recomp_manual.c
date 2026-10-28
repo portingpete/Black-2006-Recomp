@@ -768,15 +768,15 @@ static void black_aspect_refresh(void)
     caller_csr = _mm_getcsr();
     switch (aspect) {
     case PCV_ASPECT_4_3:
-        black_aspect_bits = 0x3FAAAAABu; black_view_window_bits = 0x3F800000u; black_aspect_wide = 0; break;
+        black_aspect_bits = 0x3FAAAAABu; black_view_window_bits = 0x3F800000u; break;
     case PCV_ASPECT_16_9:
-        black_aspect_bits = 0x3FE38E39u; black_view_window_bits = 0x3F99999Au; black_aspect_wide = 1; break;
+        black_aspect_bits = 0x3FE38E39u; black_view_window_bits = 0x3FAAAAABu; break;
     case PCV_ASPECT_21_9:
-        black_aspect_bits = 0x40155555u; black_view_window_bits = 0x3FC9999Au; black_aspect_wide = 1; break;
+        black_aspect_bits = 0x40155555u; black_view_window_bits = 0x3FE00000u; break;
     case PCV_ASPECT_32_9:
-        black_aspect_bits = 0x40638E39u; black_view_window_bits = 0x4019999Au; black_aspect_wide = 1; break;
+        black_aspect_bits = 0x40638E39u; black_view_window_bits = 0x402AAAABu; break;
     default:
-        black_aspect_bits = 0; black_view_window_bits = 0; black_aspect_wide = 0; break;
+        black_aspect_bits = 0; black_view_window_bits = 0; break;
     }
     applied = (LONG)aspect;
     if (black_aspect_bits)
@@ -805,32 +805,26 @@ static int black_pc_ram_span(uint32_t address, uint32_t bytes)
 
 void sub_0015A960(void)
 {
-    const uint32_t renderer = g_edi, index = g_eax;
-    const unsigned int caller_csr = _mm_getcsr();
-    black_aspect_refresh();
-    _mm_setcsr(caller_csr);
-    /* Only the two world views have this layout. Preserve original handling
-     * for an unexpected index or pointer rather than extending the write. */
-    const int configured = black_aspect_bits && index < 2u &&
-        black_pc_ram_span(renderer, 0xD568u);
-    if (configured) {
-        *(unsigned char *)((uintptr_t)g_xbox_mem_offset + renderer + 0xCu) =
-            black_aspect_wide;
-        if (black_aspect_wide) black_aspect_wide_written = 1;
-    } else if (black_aspect_wide_written && !black_aspect_bits && index < 2u &&
-               black_pc_ram_span(renderer, 0xD568u)) {
-        /* Back to the original camera: the setup has not run since the flag was forced on. */
-        *(unsigned char *)((uintptr_t)g_xbox_mem_offset + renderer + 0xCu) = 0;
-        if (index == 1u) black_aspect_wide_written = 0;
-    }
+    /* Keep the native camera and UI defaults. Projection updates borrow only
+     * the two world lens fields, restoring them after the native producer. */
     sub_0015A960_gen();
-    if (configured) {
-        const uint32_t camera = renderer + index * 0xA0u + 0xD450u;
-        /* Writing IEEE bits introduces no caller-MXCSR-dependent arithmetic. */
-        GUEST32(camera + 0x70u) = black_view_window_bits;
-        GUEST32(camera + 0x74u) = black_aspect_bits;
-    }
 }
+
+/* BEGIN BLACK_LIVE_CAMERA_ASPECT */
+static int black_camera_aspect_begin(uint32_t camera, uint32_t saved[2])
+{
+    uint32_t renderer;
+    if (!black_aspect_bits || !black_pc_ram_span(0x002D67F4u, 4u)) return 0;
+    renderer = GUEST32(0x002D67F4u);
+    if (!black_pc_ram_span(renderer, 0xD590u) ||
+        (camera != renderer + 0xD450u && camera != renderer + 0xD4F0u)) return 0;
+    saved[0] = GUEST32(camera + 0x70u);
+    saved[1] = GUEST32(camera + 0x74u);
+    GUEST32(camera + 0x70u) = black_view_window_bits;
+    GUEST32(camera + 0x74u) = black_aspect_bits;
+    return 1;
+}
+/* END BLACK_LIVE_CAMERA_ASPECT */
 /* END BLACK_PC_ASPECT */
 
 /* BEGIN BLACK_PC_FOV
@@ -1154,6 +1148,8 @@ void sub_000D2F40(void)
     const unsigned caller_csr = _mm_getcsr();
     fenv_t caller_environment;
     uint32_t saved_window = 0, new_window = 0, split_aspect = 0, split_aspect_doubled = 0;
+    uint32_t aspect_saved[2];
+    int aspect_adjusted;
     int adjusted = 0;
     /* Host parsing/math/logging uses a masked nearest environment, then puts
      * every caller control/status bit back before entering the guest producer.
@@ -1161,6 +1157,8 @@ void sub_000D2F40(void)
     fegetenv(&caller_environment);
     fesetenv(FE_DFL_ENV);
     _mm_setcsr(0x1F80u);
+    black_aspect_refresh();
+    aspect_adjusted = black_camera_aspect_begin(camera, aspect_saved);
     black_fov_refresh();
     if (black_fov_vertical && black_pc_ram_span(0x002D67F4u, 4u) &&
         black_pc_ram_span(0x002D12B8u, 4u)) {
@@ -1234,6 +1232,10 @@ void sub_000D2F40(void)
     sub_000D2F40_gen();
     if (split_aspect) GUEST32(camera + 0x74u) = split_aspect;
     if (adjusted) GUEST32(camera + 0x70u) = saved_window;
+    if (aspect_adjusted) {
+        GUEST32(camera + 0x70u) = aspect_saved[0];
+        GUEST32(camera + 0x74u) = aspect_saved[1];
+    }
     black_ao_camera_publish(camera);
     black_photo_camera(camera);
     if (black_split_pass == 2 && camera == black_photo_world_camera()) black_split_camera(camera);

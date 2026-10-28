@@ -100,12 +100,13 @@ static const char black_menu_definition[] =
 "title = $FE_PAUSEMENU\r\n"
 "label = 284 141 $FE_CURRENTOBJECTIVES\r\n"
 "text = 284 165 &FE_CURRENTOBJECTIVE | wrap 300\r\n"
-"list = 285 241 25\r\n"
+"list = 285 216 22\r\n"
 "focus = 1\r\n"
 "start = back\r\n"
 "back = gamecode ClosePauseMenu\r\n"
 "loading = FELoadingPauseMenus\r\n"
 "item = $FE_CONTINUE | gamecode ClosePauseMenu\r\n"
+"item = \"PC SETTINGS\" | open VideoLauncher\r\n"
 "item = $FE_OBJECTIVESSTATUS | page PauseMenuObjectives\r\n"
 "item = $FE_RESTARTMISSION | set FEConfirmYesGameCode RestartLevel; set FEConfirmNoPage PauseMenu; page ConfirmWarning; gamecode SetupConfirmWarning RestartConfirm\r\n"
 "item = $FE_OPTIONS | page PauseMenuOptionXbox\r\n"
@@ -354,13 +355,29 @@ static const char black_menu_definition[] =
 "item = \"EXIT PHOTO MODE\" | close\r\n"
 "\r\n"
 "; Gameplay additions are opt-in. Original keeps the native aiming dot.\r\n"
+"[page VideoLauncher]\r\n"
+"panel = 18 24 280 400\r\n"
+"title = \"PC SETTINGS\"\r\n"
+"logo = none\r\n"
+"title_at = 38 58\r\n"
+"list = 40 116 32\r\n"
+"item_size = 14\r\n"
+"selector = 248\r\n"
+"prompts_at = 40 368 22\r\n"
+"back = close\r\n"
+"item = \"DISPLAY\" | open VideoDisplay\r\n"
+"item = \"GRAPHICS\" | open VideoGraphics\r\n"
+"item = \"CONTROLS\" | open Controls\r\n"
+"item = \"GAMEPLAY SETTINGS\" | open GameplaySettings\r\n"
+"item = \"BACK\" | close\r\n"
+"\r\n"
 "[page GameplaySettings]\r\n"
 "column = 00000000\r\n"
 "title = \"GAMEPLAY SETTINGS\"\r\n"
 "logo = 185.5 58\r\n"
 "title_at = 199 86\r\n"
 "rails = 47 170\r\n"
-"list = 199 147 20\r\n"
+"list = 199 147 22\r\n"
 "values = 607\r\n"
 "item_size = 13.5\r\n"
 "selector = 420\r\n"
@@ -378,7 +395,7 @@ static const char black_menu_definition[] =
 "item = \"BACK\" | close\r\n"
 "\r\n"
 "; PC video pages use the same fonts, rails, focus and input as the game's menus.\r\n"
-"; setting = TEXT | mode/window/internal/aa/af/dof/sharpen/ao_method/ao_quality/reflections/ray_tracing/aspect/fov/scale/filter/vsync/fps/blur/crosshair/hitmarkers/optional_secondaries/lod_distance/bullet_damage/enemy_health/headshot_instakill/aim_mode\r\n"
+"; setting = TEXT | mode/window/internal/aa/af/dof/sharpen/ao_method/ao_quality/reflections/ray_tracing/aspect/fov/scale/filter/vsync/fps/blur/crosshair/hitmarkers/optional_secondaries/lod_distance/bullet_damage/enemy_health/headshot_instakill\r\n"
 "; &VIDEO_HELP is the focused setting's explanation. reset_video preserves locked values.\r\n"
 "[page VideoSettings]\r\n"
 "column = 00000000\r\n"
@@ -568,11 +585,11 @@ static const char black_menu_definition[] =
  * one of them was never edited and is brought up to date. 1: the in-game pages only (2026-10-05); 4: before the
  * Controls, Photo mode and Reflections pages; 5-7: the Controls, Photo mode and Reflections builds alone; 8-9: the
  * two builds before the Ray tracing row; 10: the Ray tracing build, before the crosshair rows; 12: the Players page
- * before its two-player choice was marked experimental. */
-static const uint64_t black_menu_replaced[] = { 0xD8419D900AB2FEA6ull, 0xBBE0D874943DB641ull, 0x9F7652C358180DC6ull,
+ * before its two-player choice was marked experimental; 13: immediately before the PC SETTINGS hub. */
+static const uint64_t black_menu_replaced[] = { 0xEAF5EBB9916959FBull, 0xB267900B51F80A2Aull, 0xD8419D900AB2FEA6ull, 0xBBE0D874943DB641ull, 0x9F7652C358180DC6ull,
                                                 0xFF74A7E07CF4C7F0ull, 0x33977C1E8AC020F3ull, 0xB86AB9AC7D0F4406ull,
                                                 0xDC483F969B68C28Aull, 0x9EE07629CB313D32ull, 0xC6D3B76BDD8FC724ull,
-                                                0xCAB7BCC76B5F689Aull, 0x53E79C5FCD83D531ull, 0x8895E21EE19C8166ull, 0x5984EE9CC11281D1ull, 0x80C09B1E7F97E61Full, 0x93A312A22FFF08EAull, 0x3846873DAB993010ull, 0x3CD00D866F39BFB4ull , 0xB267900B51F80A2Aull };
+                                                0xCAB7BCC76B5F689Aull, 0x53E79C5FCD83D531ull, 0x8895E21EE19C8166ull, 0x5984EE9CC11281D1ull, 0x80C09B1E7F97E61Full, 0x93A312A22FFF08EAull, 0x3846873DAB993010ull, 0x3CD00D866F39BFB4ull };
 
 /* ---- guest helpers --------------------------------------------------------------------------------------- */
 

@@ -180,20 +180,41 @@ static uint8_t *read_all(const char *path, size_t *size)
     return b;
 }
 
+static int pause_photo_row(const char *definition)
+{
+    static const char photo_item[] = "item = \"PHOTO MODE\" | open PhotoMode";
+    const char *page = strstr(definition, "[page PauseMenu]"), *end, *line;
+    int row = 0;
+    if (!page || !(line = strchr(page, '\n'))) return -1;
+    end = strstr(page + 1, "\n[page ");
+    if (!end) end = page + strlen(page);
+    for (line++; line < end; line = strchr(line, '\n') ? strchr(line, '\n') + 1 : end) {
+        if (!strncmp(line, "item = ", 7)) {
+            if (!strncmp(line, photo_item, sizeof(photo_item) - 1)) return row;
+            row++;
+        }
+    }
+    return -1;
+}
+
 static void test_panel(const char *definition_path)
 {
     char *def = (char *)read_all(definition_path, NULL), log[4096], dump[16384];
     float m[4][3];
+    int i, photo_row;
     CHECK(def != NULL);
     if (!def) return;
     CHECK(pc_menu_check_definition(def, log, sizeof(log)) >= 13 && !log[0]);
     if (log[0]) printf("%s", log);
+    photo_row = pause_photo_row(def);
+    CHECK(photo_row >= 0);
+    if (photo_row < 0) { free(def); return; }
     pc_menu_test_reset(def);
     tick("");
     tick("PauseMenu");
-    /* CONTINUE, OBJECTIVES, RESTART, OPTIONS, PHOTO MODE */
     g_can_start = 0;
-    press(PCM_ACT_DOWN, "PauseMenu"); press(PCM_ACT_DOWN, "PauseMenu"); press(PCM_ACT_DOWN, "PauseMenu"); press(PCM_ACT_DOWN, "PauseMenu");
+    for (i = 0; i < photo_row; i++) press(PCM_ACT_DOWN, "PauseMenu");
+    CHECK(pc_menu_test_focus() == photo_row);
     press(PCM_ACT_CONFIRM, "PauseMenu");
     CHECK(!pc_photo_active());                                            /* a scripted camera: refused */
     g_can_start = 1;

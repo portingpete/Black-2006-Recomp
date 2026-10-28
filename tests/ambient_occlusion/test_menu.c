@@ -537,8 +537,8 @@ static void test_gameplay_pages(void)
     PcVideoSettings s;
     char log[4096];
     int variant, i;
-    CHECK(pc_menu_check_definition(k_black_menu_default, log, sizeof(log)) == 23 && !log[0],
-          "the production definition parses, including Gameplay settings: '%s'", log);
+    CHECK(pc_menu_check_definition(k_black_menu_default, log, sizeof(log)) == 24 && !log[0],
+          "the production definition parses, including Gameplay settings and PC SETTINGS: '%s'", log);
     for (variant = 0; variant < 2; variant++) {
         const char *page = options[variant];
         video_fresh(); reset_game(); pc_menu_test_reset(k_black_menu_default); tick(""); tick(page);
@@ -1210,7 +1210,7 @@ static void test_gameplay_default_migration(void)
     pc_menu_set_replaced_defaults(k_black_menu_replaced, (int)(sizeof(k_black_menu_replaced) / sizeof(k_black_menu_replaced[0])));
     file_put(path, previous);
     pages = pc_menu_test_load_file(path);
-    CHECK(pages == 23 && file_is(path, k_black_menu_default), "untouched shipping menu upgrades to optional secondaries");
+    CHECK(pages == 24 && file_is(path, k_black_menu_default), "untouched shipping menu upgrades to optional secondaries");
     tick(""); tick("OptionsMenuXbox");
     for (i = 0; i < 4; i++) press(PCM_ACT_DOWN, "OptionsMenuXbox");
     press(PCM_ACT_CONFIRM, "OptionsMenuXbox");
@@ -1239,7 +1239,7 @@ static void test_tuning_default_migration(void)
     pc_menu_set_default_definition(k_black_menu_default);
     pc_menu_set_replaced_defaults(k_black_menu_replaced, (int)(sizeof(k_black_menu_replaced) / sizeof(k_black_menu_replaced[0])));
     file_put(path, k_black_menu_before_tuning);
-    CHECK(pc_menu_test_load_file(path) == 23 && file_is(path, k_black_menu_default),
+    CHECK(pc_menu_test_load_file(path) == 24 && file_is(path, k_black_menu_default),
           "untouched prior menu upgrades to tuning controls");
     tick(""); tick("OptionsMenuXbox");
     for (i = 0; i < 4; i++) press(PCM_ACT_DOWN, "OptionsMenuXbox");
@@ -1262,6 +1262,116 @@ static void test_tuning_default_migration(void)
     CHECK(settings.lod_distance == 200, "native Graphics changes geometry LOD distance");
     DeleteFileA(path);
     pc_menu_set_default_definition(NULL); pc_menu_set_replaced_defaults(NULL, 0);
+}
+
+static int menu_replace_once(char **text, const char *from, const char *to)
+{
+    char *at, *replacement;
+    size_t head, from_len, to_len, tail;
+    if (!text || !*text || !(at = strstr(*text, from))) return 0;
+    head = (size_t)(at - *text); from_len = strlen(from); to_len = strlen(to); tail = strlen(at + from_len);
+    replacement = (char *)malloc(head + to_len + tail + 1);
+    if (!replacement) return 0;
+    memcpy(replacement, *text, head);
+    memcpy(replacement + head, to, to_len);
+    memcpy(replacement + head + to_len, at + from_len, tail + 1);
+    free(*text);
+    *text = replacement;
+    return 1;
+}
+
+static void test_pc_settings_default_migration(void)
+{
+    static const char launcher[] =
+        "[page VideoLauncher]\r\n"
+        "panel = 18 24 280 400\r\n"
+        "title = \"PC SETTINGS\"\r\n"
+        "logo = none\r\n"
+        "title_at = 38 58\r\n"
+        "list = 40 116 32\r\n"
+        "item_size = 14\r\n"
+        "selector = 248\r\n"
+        "prompts_at = 40 368 22\r\n"
+        "back = close\r\n"
+        "item = \"DISPLAY\" | open VideoDisplay\r\n"
+        "item = \"GRAPHICS\" | open VideoGraphics\r\n"
+        "item = \"CONTROLS\" | open Controls\r\n"
+        "item = \"GAMEPLAY SETTINGS\" | open GameplaySettings\r\n"
+        "item = \"BACK\" | close\r\n"
+        "\r\n";
+    static const char pc_settings_item[] = "item = \"PC SETTINGS\" | open VideoLauncher\r\n";
+    static const char new_pause_list[] = "list = 285 216 22\r\n";
+    static const char old_pause_list[] = "list = 285 241 25\r\n";
+    static const char new_gameplay_list[] = "list = 199 147 22\r\n";
+    static const char old_gameplay_list[] = "list = 199 147 20\r\n";
+    static const char new_setting_comment[] =
+        "; setting = TEXT | mode/window/internal/aa/af/dof/sharpen/ao_method/ao_quality/reflections/ray_tracing/aspect/fov/scale/filter/vsync/fps/blur/crosshair/hitmarkers/optional_secondaries/lod_distance/bullet_damage/enemy_health/headshot_instakill\r\n";
+    static const char old_setting_comment[] =
+        "; setting = TEXT | mode/window/internal/aa/af/dof/sharpen/ao_method/ao_quality/reflections/ray_tracing/aspect/fov/scale/filter/vsync/fps/blur/crosshair/hitmarkers/optional_secondaries/lod_distance/bullet_damage/enemy_health/headshot_instakill/aim_mode\r\n";
+    char *previous, dir[MAX_PATH], path[MAX_PATH];
+    int i, pages, registered = 0;
+
+    previous = (char *)malloc(strlen(k_black_menu_default) + 1);
+    CHECK(previous != NULL, "the immediate previous default fixture allocates");
+    if (!previous) return;
+    strcpy(previous, k_black_menu_default);
+    if (!menu_replace_once(&previous, pc_settings_item, "") ||
+        !menu_replace_once(&previous, launcher, "") ||
+        !menu_replace_once(&previous, new_pause_list, old_pause_list) ||
+        !menu_replace_once(&previous, new_gameplay_list, old_gameplay_list) ||
+        !menu_replace_once(&previous, new_setting_comment, old_setting_comment)) {
+        CHECK(0, "the immediate previous default can be reconstructed from the production definition");
+        free(previous);
+        return;
+    }
+    CHECK(fnv1a64(previous) == 0xEAF5EBB9916959FBull,
+          "PC SETTINGS migration fixture is the exact immediate prior shipping default");
+    for (i = 0; i < (int)(sizeof(k_black_menu_replaced) / sizeof(k_black_menu_replaced[0])); i++)
+        if (k_black_menu_replaced[i] == fnv1a64(previous)) registered = 1;
+    CHECK(registered, "the immediate prior shipping default has a production migration fingerprint");
+
+    GetTempPathA(sizeof(dir), dir);
+    snprintf(path, sizeof(path), "%spc-menu-pc-settings-migrate-%lu.ini", dir, (unsigned long)GetCurrentProcessId());
+    video_fresh(); reset_game();
+    pc_menu_set_default_definition(k_black_menu_default);
+    pc_menu_set_replaced_defaults(k_black_menu_replaced, (int)(sizeof(k_black_menu_replaced) / sizeof(k_black_menu_replaced[0])));
+    file_put(path, previous);
+    pages = pc_menu_test_load_file(path);
+    CHECK(pages == 24 && file_is(path, k_black_menu_default),
+          "untouched immediate prior menu upgrades to PC SETTINGS");
+    if (pages == 24 && file_is(path, k_black_menu_default)) {
+        tick("");
+        CHECK(tick("PauseMenu") == 1 && pc_menu_test_focus() == 0, "the migrated pause menu starts on Continue");
+        press(PCM_ACT_DOWN, "PauseMenu");
+        CHECK(pc_menu_test_focus() == 1, "PC SETTINGS follows Continue in the migrated pause menu");
+        press(PCM_ACT_CONFIRM, "PauseMenu");
+        CHECK(display_has("PC SETTINGS") && display_has("DISPLAY") && display_has("GAMEPLAY SETTINGS") && pc_menu_test_focus() == 0,
+              "PC SETTINGS opens its native hub over PauseMenu");
+        press(PCM_ACT_CONFIRM, "PauseMenu");
+        CHECK(display_has("WINDOW MODE") && pc_menu_test_focus() == 0, "the hub opens Display as its first child");
+        log_clear();
+        press(PCM_ACT_BACK, "PauseMenu");
+        CHECK(display_has("PC SETTINGS") && display_has("GAMEPLAY SETTINGS") && !display_has("WINDOW MODE") &&
+              pc_menu_test_focus() == 0 && !strstr(g_log, "page ") && !strstr(g_log, "gamecode "),
+              "Back returns Display to the PC SETTINGS hub without navigating the guest page");
+        press(PCM_ACT_DOWN, "PauseMenu");
+        press(PCM_ACT_CONFIRM, "PauseMenu");
+        CHECK(display_has("ANTI-ALIASING") && pc_menu_test_focus() == 0,
+              "the hub opens Graphics as its second child");
+        log_clear();
+        press(PCM_ACT_BACK, "PauseMenu");
+        CHECK(display_has("PC SETTINGS") && display_has("GRAPHICS") && !display_has("ANTI-ALIASING") &&
+              pc_menu_test_focus() == 1 && !strstr(g_log, "page ") && !strstr(g_log, "gamecode "),
+              "Back returns Graphics to the PC SETTINGS hub with Graphics focused");
+        log_clear();
+        press(PCM_ACT_BACK, "PauseMenu");
+        CHECK(display_has("PHOTO MODE") && !display_has("DISPLAY") && pc_menu_test_focus() == 1 &&
+              !strstr(g_log, "page ") && !strstr(g_log, "gamecode "),
+              "Back returns the hub to PauseMenu with PC SETTINGS still focused");
+    }
+    DeleteFileA(path);
+    pc_menu_set_default_definition(NULL); pc_menu_set_replaced_defaults(NULL, 0);
+    free(previous);
 }
 
 static void test_video_file_supplements(void)
@@ -1794,6 +1904,7 @@ int main(int argc, char **argv)
     test_gameplay_pages();
     test_gameplay_default_migration();
     test_tuning_default_migration();
+    test_pc_settings_default_migration();
     test_native_page_stack();
     test_video_setting_focus_and_layout();
     test_input();

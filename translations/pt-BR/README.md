@@ -7,3 +7,5 @@ The table was extracted by matching the English and PT-BR `MainUS.bin` banks by 
 Reference English bank SHA-256: `B23EEB4AD86A72894B40E7239D0EA8842E5A6BC05936A936401B608070E8C7BB`.
 
 This is the editable PT-BR translation source. The launcher build generates `local/language-banks/pt-BR/MainUS.bin` from it and the verified English bank. The generated bank keeps every English record ID and ordering, applying these translations and retaining English for omitted entries. The licensed English bank and generated PT-BR bank remain local and are not committed.
+
+The `fonts/` directory contains `Big.bin` and `Small.bin` with the font texture patched for Brazilian Portuguese tildes (`ã`, `õ`, `Ã`, `Õ`). When the game is launched in Portuguese, the launcher automatically installs these fonts; when launched in any other language, it automatically restores the clean retail English fonts from its local backup.

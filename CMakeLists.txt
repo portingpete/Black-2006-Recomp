@@ -26,6 +26,11 @@ add_executable(${PROJECT_NAME} WIN32
     src/recomp_manual.c
     ${RECOMP_GEN_SOURCES}
 )
+if(WIN32)
+    enable_language(RC)
+    target_sources(${PROJECT_NAME} PRIVATE src/black.rc)
+endif()
+
 # The release version, shared with the launcher
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" BLACK_VERSION LIMIT_COUNT 1)
 target_compile_definitions(${PROJECT_NAME} PRIVATE BLACK_VERSION="${BLACK_VERSION}")
