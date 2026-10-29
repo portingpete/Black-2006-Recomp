@@ -21,7 +21,10 @@ first-person weapon.
 
 The panel also sets the **field of view**, **roll** (five-degree steps), whether the **weapon** is shown,
 the **camera speed** and the **camera range**: 6, 12, 20 or 30 metres around where photo mode started (and half as
-high), so the camera cannot leave the built level. The panel fades while the camera moves and comes back when it
+high), or **FREE** (**LIVRE** in Portuguese) after 30 M. FREE removes both distance and height limits, including
+the limit below the starting point, so you can explore the loaded level. It does not load other missions or add
+geometry outside the built level; those areas may show voids or the backs of walls. **RESET CAMERA** returns to
+the starting view even in FREE mode. The panel fades while the camera moves and comes back when it
 stops; any panel input brings back a panel you put away. **RESET CAMERA** returns to the gameplay view.
 
 Photos go to `Pictures\BLACK` as `BLACK_<date>_<time>.png` (`RECOMP_PHOTO_DIR` moves them). The panel shows each
@@ -53,7 +56,7 @@ photos and the panel without game files.
 | Does the paused game keep rendering the 3D scene? | Yes. The world camera producer `sub_000D2F40` runs about 60 times a second while paused, and every frame is redrawn. |
 | Where can the camera be replaced? | Right after `sub_000D2F40`. It copies the camera entity's matrix into the RwCamera frame (`[camera+0x58]+4`: modelling matrix at `+0x10`, LTM at `+0x50`; rows right/up/at/pos of 16 bytes) and then sets the view window. Rewriting both matrices afterwards moves the rendered view, and the frustum used for culling follows it. |
 | Is geometry culled by the player's position? | No. Views 8, 20 and 40 units ahead, 10 behind and 25 above all render the loaded level, including enemies frozen in place. |
-| What limits are needed? | Distance and height. Past the built level the camera shows black voids and the outsides of walls. |
+| What limits are needed? | The optional bounded ranges limit distance and height. FREE removes both; past the built level the camera can show black voids and the outsides of walls. |
 | HUD and menus in captures? | Neither. The game hides its HUD while paused, and the native pages are drawn by the presenter, outside the captured frame. |
 | Cutscenes and scripted cameras? | The camera entity's FOV-enable byte `+0x16A4` is clear in scripted camera mode (`BLACK_PC_FOV`); photo mode refuses to open then. |
 

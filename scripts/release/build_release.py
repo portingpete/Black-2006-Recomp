@@ -97,7 +97,8 @@ def collect_sources(root):
             continue
         if path.parts[0] in PRIVATE_DIRS or path.parts[:2] == ('src', 'recomp') or any(part.startswith('build-') for part in path.parts[:-1]):
             raise ValueError(f'Private path is tracked: {name}')
-        if path.suffix.lower() in BINARY_SUFFIXES or path.name.startswith('.env') or path.name == 'black_xmv_idct.inc':
+        is_font_asset = path.parts[0] == 'translations' and path.suffix.lower() == '.bin'
+        if (path.suffix.lower() in BINARY_SUFFIXES and not is_font_asset) or path.name.startswith('.env') or path.name == 'black_xmv_idct.inc':
             raise ValueError(f'Private/binary file is tracked: {name}')
         data = safe_file(root / name, root).read_bytes()
         if SECRET.search(data):

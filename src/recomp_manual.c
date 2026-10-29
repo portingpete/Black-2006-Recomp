@@ -31,6 +31,7 @@
 #include "pc_video.h"
 #include "pc_video_menu.h"
 #include "pc_movie_skip.h"
+#include "pc_speech_subtitle.h"
 #include "pc_menu.h"
 #include "fb_present.h"
 #include "black_menu_prompt_language.h"
@@ -172,6 +173,12 @@ static const recomp_func_t g_itrace_wrappers[ITRACE_SLOTS] = {
  * tools.recomp --exclude-manual on this file (scripts/regen-and-build.ps1
  * passes it). The first-frame open and normal decoder teardown remain native.
  */
+/* Keep wrapper declarations visible to the recompiler's manual-source scan. */
+extern void sub_0014EB10_gen(void);
+extern void sub_0014EBF0_gen(void);
+extern void sub_00146EA0_gen(void);
+#include "black_speech_subtitles.inc"
+
 extern void sub_000C4570_gen(void);
 
 static int movie_skip_all = -1;
@@ -4637,6 +4644,52 @@ void black_controls_install(void)
 }
 /* END BLACK_PC_CONTROLS */
 
+/* BEGIN BLACK_PC_MOVEMENT
+ * 1CC490 builds controller+60 (direction) and +20 (speed) before 1F08D0
+ * submits the player's displacement to native collision. Scale only that speed,
+ * after the original controller update; never move the actor through walls.
+ * 1DF630 publishes grounded at actor+3A0 and skips floor snapping while +2E4
+ * is positive. 1DFD90 supplies native gravity. The proxy motion's +24 is Y
+ * displacement per physics step (1F08D0 preserves it while writing X/Z).
+ */
+static void black_pc_movement(uint32_t controller)
+{
+    PcVideoSettings video;
+    uint32_t actor, proxy, body;
+    int sprint, jump;
+    fenv_t environment;
+    const unsigned csr = _mm_getcsr();
+    if (black_p2_in) return; /* keyboard/mouse belongs to player one */
+    fegetenv(&environment);
+    fesetenv(FE_DFL_ENV);
+    _mm_setcsr(0x1F80u);
+    pc_input_movement(&sprint, &jump);
+    pc_video_get(&video);
+    if ((!video.sprint && !video.jump) || !pc_input_gameplay_active() ||
+        black_pc_input_gameplay_blocked_query() || !black_pc_ram_span(controller, 0x110u)) goto done;
+    actor = GUEST32(controller + 0x8Cu);
+    if (!black_pc_ram_span(actor, 0x3B0u) || GUEST32(actor + 0x324u) != controller ||
+        GUEST8(actor + 0x3ADu) || GUEST8(actor + 0x3A7u) || GUEST32(actor + 0x384u) == 2u) goto done;
+    if (video.sprint && sprint && !GUEST8(controller + 0x40u) && !GUEST8(controller + 0x45u)) {
+        const float speed = black_input_f32(controller + 0x20u);
+        if (isfinite(speed) && speed > 0.0f && speed < 20.0f)
+            black_input_put_f32(controller + 0x20u, speed * 1.5f);
+    }
+    if (video.jump && jump && GUEST8(actor + 0x3A0u) && !GUEST8(controller + 0x40u)) {
+        proxy = GUEST32(actor + 0xB4u);
+        body = black_proxy_motion(proxy);
+        if (body && !GUEST8(proxy + 0x3Cu) && fabsf(black_input_f32(actor + 0x2E4u)) < 0.1f) {
+            black_input_put_f32(actor + 0x2E4u, 4.5f);
+            black_input_put_f32(body + 0x24u, 4.5f / (float)black_sim_hz());
+            GUEST8(actor + 0x3A0u) = 0;
+        }
+    }
+done:
+    fesetenv(&environment);
+    _mm_setcsr(csr);
+}
+/* END BLACK_PC_MOVEMENT */
+
 /* BEGIN BLACK_PC_AIM
  * Retail 1EC450 reads action slot 16 from this input component's decoded pad.
  * Its aim intent is self+45 and its toggle latch is self+104. In Hold mode,
@@ -4680,6 +4733,7 @@ void sub_001EC450(void)
     fesetenv(&environment);
     _mm_setcsr(csr);
     sub_001EC450_gen();
+    black_pc_movement(self);
 }
 /* END BLACK_PC_AIM */
 

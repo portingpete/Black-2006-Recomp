@@ -485,5 +485,13 @@
   "AIM MODE": "MODO DE MIRA",
   "TOGGLE": "ALTERNAR",
   "HOLD": "SEGURAR",
-  "Toggle keeps the original aim behavior. Hold aims only while the aim button is held.": "Alternar mantém a mira original. Segurar mira apenas enquanto o botão de mira estiver pressionado."
+  "Toggle keeps the original aim behavior. Hold aims only while the aim button is held.": "Alternar mantém a mira original. Segurar mira apenas enquanto o botão de mira estiver pressionado.",
+  "PRECOMPILE SHADERS AT STARTUP": "PRÉ-COMPILAR SHADERS AO INICIAR",
+  "Applies next time you start the game. On prepares recorded shaders before playing. Off skips that preparation; shaders needed during play are still compiled.": "Aplica na próxima abertura. Ligado prepara os shaders registrados antes de jogar. Desligado pula essa preparação; shaders necessários durante a partida continuam sendo compilados.",
+  "SUBTITLES": "LEGENDAS",
+  "Show subtitles for dialogue and cutscenes. Applies the next time you start the game.": "Mostrar legendas nas falas e nos vídeos. A alteração vale na próxima vez que abrir o jogo.",
+  "SPRINT": "CORRER",
+  "JUMP": "PULAR",
+  "Hold the Sprint key while moving to run faster. Default: Left Shift. Off keeps original movement.": "Segure a tecla Correr ao se mover para correr mais rápido. Padrão: Shift esquerdo. Desligado mantém o movimento original.",
+  "Press the Jump key on the ground to jump. Default: Space. Release before jumping again.": "Pressione Pular no chão para saltar. Padrão: Espaço. Solte a tecla antes de pular novamente."
 }

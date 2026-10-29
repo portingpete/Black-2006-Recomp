@@ -30,6 +30,8 @@ static int black_pc_input_resolver(int slot) {
 }
 void pc_video_get(PcVideoSettings *v) { memset(v,0,sizeof(*v)); v->aim_hold=(unsigned)setting_hold; fesetround(FE_DOWNWARD); _mm_setcsr(0x3f80u); }
 void pc_input_set_aim_hold_mode(int enabled) { mode_published=(unsigned)enabled; }
+void black_pc_movement(uint32_t self);
+void black_pc_movement(uint32_t self) { (void)self; }
 #include "aim.extracted.inc"
 
 /* Model only the documented aim latch and toggle edge, not weapon/zoom/animation. */

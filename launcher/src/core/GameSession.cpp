@@ -265,6 +265,7 @@ std::map<std::string, std::string> gameEnvironment(const ProjectLayout& project,
         {"RECOMP_VIDEO_INI", gamePath(project.localDirectory() / "video.ini", style)},
         {"RECOMP_CONTROLS_INI", gamePath(project.localDirectory() / "controls.ini", style)},
         {"RECOMP_LANGUAGE", settings.menuLanguage},
+        {"RECOMP_SUBTITLES", settings.subtitles ? "1" : "0"},
         {"RECOMP_BLACK_INPUT_MODE", settings.inputMode},
         {"RECOMP_BLACK_PROMPT_MODE", settings.promptMode},
         {"RECOMP_BLACK_MOUSE_SENSITIVITY", shortest(settings.mouseSensitivity)},
@@ -273,6 +274,7 @@ std::map<std::string, std::string> gameEnvironment(const ProjectLayout& project,
     if (settings.gpuRenderer) {
         env["RECOMP_KELVIN_GPU"] = "1";
         env["RECOMP_KGPU_CACHE"] = gamePath(project.localDirectory() / "kgpu-cache", style);  // compiled shaders
+        env["RECOMP_KGPU_PRECOMPILE"] = settings.precompileShaders ? "1" : "0";
     }
     if (settings.smooth60 && settings.smoothHz != 0) {
         env["RECOMP_BLACK_HZ"] = std::to_string(settings.smoothHz);

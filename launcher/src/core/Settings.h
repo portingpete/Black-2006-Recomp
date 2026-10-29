@@ -16,10 +16,12 @@ namespace black::core {
 struct Settings {
     // Game
     bool gpuRenderer = true;
+    bool precompileShaders = false;
     bool smooth60 = true;
     int smoothHz = 0;  // with smooth60: 0 runs the game clock at 60 steps per second, else 120 or 240
     int threads = 4;
     bool skipMovies = false;
+    bool subtitles = true;
     bool skipStartupVideos = false;
     bool infiniteAmmo = false;
     std::string silverWeaponMode = "native";  // native, force-on, force-off
@@ -58,8 +60,10 @@ struct Settings {
     std::string crosshair = "original";
     std::string hitmarkers = "off";
     std::string optional_secondaries = "off";  // mission completion still requires primary objectives
-    std::string aimMode = "toggle";            // toggle preserves the original aim behavior
-    int lod_distance = 100;                    // percentages: 100 keeps the original distances/damage/health
+    std::string sprint = "off";
+    std::string jump = "off";
+    std::string aimMode = "toggle";  // toggle preserves the original aim behavior
+    int lod_distance = 100;          // percentages: 100 keeps the original distances/damage/health
     int bullet_damage = 100;
     int enemy_health = 100;
     std::string headshot_instakill = "off";

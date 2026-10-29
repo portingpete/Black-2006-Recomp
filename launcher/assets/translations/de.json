@@ -485,5 +485,13 @@
   "AIM MODE": "ZIELMODUS",
   "TOGGLE": "UMSCHALTEN",
   "HOLD": "HALTEN",
-  "Toggle keeps the original aim behavior. Hold aims only while the aim button is held.": "Umschalten behält das ursprüngliche Zielverhalten bei. Halten zielt nur, solange die Zieltaste gedrückt wird."
+  "Toggle keeps the original aim behavior. Hold aims only while the aim button is held.": "Umschalten behält das ursprüngliche Zielverhalten bei. Halten zielt nur, solange die Zieltaste gedrückt wird.",
+  "SUBTITLES": "UNTERTITEL",
+  "Show subtitles for dialogue and cutscenes. Applies the next time you start the game.": "Untertitel für Dialoge und Zwischensequenzen anzeigen. Gilt beim nächsten Spielstart.",
+  "PRECOMPILE SHADERS AT STARTUP": "SHADER BEIM START VORAB KOMPILIEREN",
+  "Applies next time you start the game. On prepares recorded shaders before playing. Off skips that preparation; shaders needed during play are still compiled.": "Gilt beim nächsten Spielstart. Ein bereitet aufgezeichnete Shader vor dem Spielen vor. Aus überspringt diese Vorbereitung; während des Spiels benötigte Shader werden weiterhin kompiliert.",
+  "SPRINT": "SPRINTEN",
+  "Hold the Sprint key while moving to run faster. Default: Left Shift. Off keeps original movement.": "Halte die Sprint-Taste beim Bewegen gedrückt, um schneller zu laufen. Standard: Linke Umschalttaste. Aus behält die ursprüngliche Bewegung bei.",
+  "JUMP": "SPRINGEN",
+  "Press the Jump key on the ground to jump. Default: Space. Release before jumping again.": "Drücke die Sprung-Taste auf dem Boden, um zu springen. Standard: Leertaste. Vor dem erneuten Springen loslassen."
 }

@@ -1,0 +1,527 @@
+# level	sector	sectors	rate	end_ms	caption (Xbox spch_EN bank)
+0	0	16	32000	1724	What is that?
+0	16	32	32000	3448	Final sweep, no contact. Over.
+0	48	16	32000	1724	Copy that.
+0	64	32	32000	3448	Bravo here, I'm going in.
+0	96	16	32000	1724	Moving to intercept.
+0	112	16	32000	1724	Bravo team, stay where you are!
+0	128	32	32000	3448	Bravo, hold and cover their six.
+0	160	48	32000	5172	Charlie, sitrep! Charlie, team, sitrep!
+0	208	16	32000	1724	Anyone have a visual?
+0	224	32	32000	3448	Negative. Hold your position, Bravo.
+0	256	48	32000	5172	Come in! Come in! We're pinned down! Receiving heavy fire! Need support!
+0	304	16	32000	1724	What's your position?
+0	320	16	32000	1724	On your six!
+0	336	16	32000	1724	On your right!
+0	352	16	32000	1724	PIMMED OUT!
+0	368	32	32000	3448	RPG, rooftop, take the shot!
+0	400	16	32000	1724	I'm going in!
+0	416	16	32000	1724	There's too many of them!
+0	432	16	32000	1724	THEY'RE EVERYWHERE!
+0	448	16	32000	1724	Take out the reinforcements!
+0	464	16	32000	1724	Move it!
+0	480	32	32000	3448	Let's get on top of it.
+0	512	16	32000	1724	Watch your left arc.
+0	528	16	32000	1724	Reloading!
+0	544	16	32000	1724	They've got us dialed in.
+0	560	16	32000	1724	Target down!
+0	576	32	32000	3448	Heads up! Enemy moving out of the museum!
+0	608	32	32000	3448	They're coming in through the wall!
+0	640	32	32000	3448	RPG in the tower, 12 o'clock!
+0	672	16	32000	1724	Who's in overwatch?
+0	688	16	32000	1724	Vehicle neutralized.
+0	704	32	32000	3448	Charlie team moving out, we have the point.
+0	736	32	32000	3448	Contact! Contact!
+0	768	32	32000	3448	Copy, Delta covering your advance.
+0	800	64	32000	6896	Be advised, target's times two still in the perimeter. Target four has just entered the building west of Bravo Team.
+0	864	32	32000	3448	Get a shooter in the high ground! Take him out!
+0	896	32	32000	3448	Keep your head down! We got a shooter in the high ground!
+0	928	32	32000	3448	Look out! Shooter up above! Shooter above!
+0	960	32	32000	3448	Get that shooter above! Someone take him out!
+0	992	48	32000	5172	We're gonna get cut to pieces. Drop the guy in high ground.
+0	1040	16	32000	1724	Fall back to cover!
+0	1056	32	32000	3448	Cover the flank, he's trying to get around us.
+0	1088	32	32000	3448	Making heavy fire, heavy fire, shots are coming from above
+0	1120	32	32000	3448	Cover me, I'm taking out the guy above.
+0	1152	32	32000	3448	Shooter above! Shooter above!
+0	1184	32	32000	3448	Keep your head down, we got an RPG in high ground!
+0	1216	32	32000	3448	There's an RPG above! Someone take him out!
+0	1248	32	32000	3448	Taking heavy RPG fire, shots are coming from above
+0	1280	32	32000	3448	Cover me! I'm taking out the RPG above!
+0	1312	16	32000	1724	Shoot her in the window!
+0	1328	32	32000	3448	Window above! Window above! Look out!
+0	1360	32	32000	3448	Shoot it in the upper forms!
+0	1392	32	32000	3448	Check fire! Check fire! They're trying to flank us!
+0	1424	32	32000	3448	Get on the flank, they're cutting around!
+0	1456	32	32000	3448	Open up on the flank! They're coming around!
+0	1488	32	32000	3448	Swing around! Swing around! They're trying to flank us!
+0	1520	32	32000	3448	Someone get on that flank, they're trying to get behind us!
+0	1552	32	32000	3448	They're moving on the front get out of there
+0	1584	16	32000	1724	Let's go, goddammit!
+0	1600	32	32000	3448	Move! Move! Move! Goddammit!
+0	1632	16	32000	1724	MOVE YOUR ASS!
+0	1648	32	32000	3448	Move! Move! Move! Watch your flank!
+0	1680	16	32000	1724	Cover me!
+0	1696	16	32000	1724	Cover me, I'm moving in!
+0	1712	32	32000	3448	Get over here and get me covering fire!
+0	1744	16	32000	1724	Move it out! Cover me!
+0	1760	32	32000	3448	Get those heads down! I'm moving to flank!
+0	1792	16	32000	1724	Drop them!
+0	1808	32	32000	3448	Get rogues downrange!
+0	1840	16	32000	1724	FUN!
+0	1856	32	32000	3448	I can't wait here! I'm moving out!
+0	1888	80	32000	8620	Hammerhead 6-2, this is 2-5, we're pinned down! I have multiple casualties! Request priority medevac on my location!
+0	1968	80	32000	8620	This is 2-5, I say again, we're pinned down, we're pinned down! I have multiple casualties! Request priority medevac on my location!
+0	2048	128	32000	13792	Emirates 6-2, this is Alpha 2-9, we have eyes on 2-5. TZ receiving heavy fire, multiple hostiles inbound from 5-1's location. Request AC-130 gunship support.
+0	2176	64	32000	6896	Hammerhead 6-2, Hammerhead 6-2. We have unknown additional forces on the ground.
+0	2240	16	32000	1724	Copy that.
+0	2256	48	32000	5172	5-1, 5-1, this is 3-1. I'm on the other side of the block. I'm coming to you now. Over.
+0	2304	96	32000	10344	Hammerhead 6-2, this is 3-1. We're encountering heavy resistance. Hostiles have set up RPG shells in surrounding buildings, attempting to secure location.
+0	2400	32	32000	3448	Copy that, 6-2.
+0	2432	48	32000	5172	3-1, watch your corner! You got incoming RPGs!
+0	2480	48	32000	5172	This is Anvil 7-1. Package has roped in. We are standing by in holding pattern. Over.
+0	2528	32	32000	3448	Copy that, on station.
+0	2560	80	32000	8620	This is 7-1. Hostile forces are regrouping and headed for the museum. Request permission to engage targets.
+0	2640	64	32000	6896	This is Charlie 2-0. We have breached the museum. Multiple hostiles inside. Please advise.
+0	2704	32	32000	3448	Copy that, 2-0, holding position.
+0	2736	80	32000	8620	Hammerhead 6-2, this is Echo 5-1. Package has escaped the net. I say again, Package has escaped the net. Do any Helos have a visual? Over.
+0	2816	32	32000	3448	Copy that, 6-2.
+0	2848	96	32000	10344	5-1, 5-1, this is Hammerhead 6-2. Track advises streets barricaded to the north. We are circling around you to find an alternate route, over.
+0	2944	64	32000	6896	Negative 2-9, QRF is en route to reinforce. Rally on their position and do what you can.
+0	3008	80	32000	8620	Copy that, 3-1. All call signs be advised, hostiles have defensive positions in surrounding structures. RPGs confirmed.
+0	3088	64	32000	6896	Copy that, Anvil 7-1. Provide overwatch for Echo 5-1. They're moving to rally point Z, over.
+0	3152	32	32000	3448	I'll say it again, you're ass we did not copy.
+0	3184	48	32000	5172	Copy that. Be back en route. ETA five minutes.
+0	3232	80	32000	8620	Negative 7-1, remain on station and provide overwatch. We have Bravo and Charlie teams inbound. We will be able to neutralize threat.
+0	3312	64	32000	6896	2-0, hold your position. Alpha 2-9 and 2-5 are inbound to assist, over.
+0	3376	48	32000	5172	Copy that 2-9, we are raising attack now, wait out.
+0	3424	96	32000	10344	2-9, do not engage those forces unless fired upon. Battalion S-2 advises shooters are coalition strike teams. Do you copy?
+0	3520	32	32000	3448	Stand by, 5-1.
+0	3552	80	32000	8620	5-1, that is a negative. Do not pursue the package. Hold your position and secure the location. Do you copy?
+0	3632	32	32000	3448	They're moving in on the flag, get the fuck over there!
+0	3664	16	32000	1724	Swing it right under the flag!
+0	3680	32	32000	3448	Cover that fuckin' flank, don't let them get behind you!
+0	3712	32	32000	3448	Shooter above! Shooter above!
+0	3744	32	32000	3448	Got an RPG in the high ground, nail it!
+0	3776	32	32000	3448	Heads up! RPG above! RPG above!
+0	3808	32	32000	3448	SHIT! WE'RE GONNA GET CUT TO PIECES! DROP THE GUY IN HIGH GROUND!
+0	3840	32	32000	3448	Find cover! Shooter above you! Shooter above!
+0	3872	16	32000	1724	They're moving on the flag!
+0	3888	32	32000	3448	They're moving up on the flag! Get over there!
+0	3920	32	32000	3448	On the flank! On the flank!
+0	3952	16	32000	1724	Cover that fucking window!
+0	3968	32	32000	3448	Shooter in the window above! Someone drop him!
+0	4000	32	32000	3448	Window above! Window above! Get rounds on 'em!
+0	4032	16	32000	1724	Let's go! Let's go! Move!
+0	4048	16	32000	1724	Get your fucking ass moving!
+0	4064	32	32000	3448	MOVE! MOVE! MOVE! GOD DAMMIT!
+0	4096	16	32000	1724	Stay tight!
+0	4112	16	32000	1724	Hold it! Cover me!
+0	4128	16	32000	1724	Get in the cover and fire!
+0	4144	32	32000	3448	Get me some fucking covering fire!
+0	4176	32	32000	3448	Cover me! I'm gonna try and flank 'em!
+0	4208	16	32000	1724	Get rounds on target!
+0	4224	16	32000	1724	FIRE GOD DAMMIT!
+0	4240	32	32000	3448	RETURN FIRE! RETURN FIRE! GOD DAMMIT!
+0	4272	32	32000	3448	You will hold your position, Bravo!
+1	0	16	32000	1724	Get out of there! Move!
+1	16	32	32000	3448	2-1, this is 3, message, over.
+1	48	48	32000	5172	Two-one, this is three, nothing heard, proceeding to top out, over.
+1	96	64	32000	6896	Top hat has been negotiated, continuing to blockhouse, figures two-zero until RV, over.
+1	160	32	32000	3448	Blockhouse now, checking the yard, over.
+1	192	32	32000	3448	2-1, this is 3, do you copy?
+1	224	64	32000	6896	Blockhouse made safe. Minimal resistance. Proceeding to RV. Out.
+1	288	96	32000	10344	2-1, this is 3-RV now. Lokstad, over. If you read me, Stage 2 now in play. I am moving forward, out.
+1	384	32	32000	3448	Request covering fire!
+1	416	64	32000	6896	3, this is 2-1, I have eyes on. Stand 2, enemy advancing on your location.
+1	480	80	32000	8620	Contact. Targets times seven. Correction, times ten. Sweep and clear the area. Move now! Move now!
+1	560	48	32000	5172	Negative 3 cannot compromise our position. 2-1 out.
+1	608	96	32000	10344	2-1, 2-1, do you copy, over? 2-1, do you read me, over? If you copy I am proceeding to RV, out.
+1	704	80	32000	8620	This is Bravo 3 Radio Check, over. Nothing heard, out.
+1	784	112	32000	12068	This is 3, I have heavy forces defending blockhouse, over. I say again, I have heavy forces defending blockhouse, proceeding through objective will advise shortly, out.
+1	896	48	32000	5172	Bravo 2-1, this is 3-D, do you copy? Over.
+1	944	112	32000	12068	Any call sign on this net, this is Bravo 3, do you copy? Farmhouse, now, I say again, Farmhouse, now, RV is empty, what is your situation?
+1	1056	128	32000	13792	Continuing to blockhouse. Figures 2-0 until RV over. I say again, figures 2-0 until RV blockhouse is fallen over. Nothing heard. Out.
+1	1184	48	32000	5172	This is Bravo 3 radio check over
+1	1232	64	32000	6896	Bravo 3, targets neutralized.
+1	1296	32	32000	3448	This is 3, I'm taking out hard targets in the area.
+1	1328	16	32000	1724	I'm pinned down!
+1	1344	32	32000	3448	Contact! Contact! Message over!
+1	1376	32	32000	3448	RV in figures three, four, bring it in.
+1	1408	32	32000	3448	Area clear, moving in.
+1	1440	32	32000	3448	Hostiles neutralized. Advancing to next area.
+1	1472	32	32000	3448	We got more hostiles coming in.
+1	1504	64	32000	6896	This is 2-1. You're in sweep and clear of the area for intel. We'll contact you in figures 2-0. Out.
+1	1568	80	32000	8620	This is 2-1. We have eyes on hostiles in surrounding buildings. Clear the area. We will support from our location. Over.
+1	1648	64	32000	6896	Bravo 3, this is 2-1. Hold your position. We are inbound to rally on your location. Stand by.
+3	0	32	32000	3448	This is 3, moving out.
+3	32	48	32000	5172	Copy that 2-1, I have visual. Smoke 12 o'clock.
+3	80	16	32000	1724	Copy that, four.
+3	96	32	32000	3448	This is 2-1, RV at the main plant.
+3	128	32	32000	3448	This is 2-1, can you see smoke or any chimneys?
+3	160	96	32000	10344	You're out of position. Do you copy? You are out of position. You're approaching a minefield. You do not have time to bypass. Advance and watch for tripwires.
+3	256	32	32000	3448	This is 2-1. There are hostiles everywhere. I'll cover you.
+3	288	16	32000	1724	Enemy on your point!
+3	304	16	32000	1724	Contact on your right!
+3	320	16	32000	1724	They're trying to flank you on the left!
+3	336	16	32000	1724	Above you! Above you!
+3	352	16	32000	1724	I love you!
+3	368	32	32000	3448	Enemy in cover, I have the shot, firing!
+3	400	80	32000	8620	This is 2-1. I do not have a clear line of sight. I say again, I do not have a clear line of sight. I cannot cover your advance. Over.
+3	480	16	32000	1724	I'm losing visual.
+3	496	32	32000	3448	Visual reacquired. Standing by.
+3	528	64	32000	6896	4, this is 2-1, what are the target? We're behind schedule. Blow the equipment and get out of there ASAP. Out.
+3	592	80	32000	8620	Copy that. 3, this is 4. Come in the main machine room, destroy the smaller equipment, then blow the main room from the inside, over.
+3	672	48	32000	5172	Three left, get close and waste the control panels.
+3	720	32	32000	3448	I'm lighting it up. Stand by.
+3	752	32	32000	3448	All callsigns, brace, brace, brace!
+3	784	16	32000	1724	Copy.
+3	800	16	32000	1724	Copy that.
+3	816	48	32000	5172	This is 3. I'm taking out hard targets in the area. We'll advise further if necessary. Out.
+3	864	48	32000	5172	Bravo 3, targets neutralized. Exiting building. Hold fire.
+3	912	48	32000	5172	Bravo 3, detonate the mines with your weapon before advancing.
+3	960	64	32000	6896	This is 2-1. Hostiles advancing on your location. I will provide sniper overwatch on your advance.
+3	1024	80	32000	8620	Bravo 3, infiltrate the structure and destroy all targets of opportunity. Bravo 4 will sweep and clear the perimeter, copy?
+3	1104	32	32000	3448	Bravo 4, sitrep, over.
+3	1136	32	32000	3448	Copy that. Three, what's your situation?
+3	1168	16	32000	1724	Covering!
+3	1184	32	32000	3448	Take out the shooter behind that cover!
+3	1216	32	32000	3448	Negative three cannot compromise our position.
+3	1248	16	32000	1724	YOU GOT IT!
+3	1264	32	32000	3448	Stand by. I got multiple hostiles moving along the perimeter.
+3	1296	48	32000	5172	Encounter heavy resistance. I'm going to hook around the outside of the fuel area. Over.
+3	1344	32	32000	3448	Target 1 is wired and good to go. Proceeding to Target 2.
+3	1376	32	32000	3448	Markets 1 and 2 ready to be lit up. Stand by.
+3	1408	32	32000	3448	Overwatch advise! Hostiles on the move!
+3	1440	32	32000	3448	Security up front! We're getting close!
+3	1472	16	32000	1724	Moving!
+3	1488	32	32000	3448	Multiple hostiles inbound.
+3	1520	16	32000	1724	Taking fire!
+3	1536	32	32000	3448	INCOMING I HEARD INCOMING
+3	1568	16	32000	1724	Move in! Cover me!
+3	1584	16	32000	1724	YOU'RE SHOOTING AT ME FIRE!
+3	1600	32	32000	3448	Give me covering fire!
+3	1632	32	32000	3448	Get over here and give me some covering fire.
+3	1664	16	32000	1724	Drop him!
+3	1680	32	32000	3448	Get rounds on that target!
+3	1712	32	32000	3448	Incoming! Get down!
+3	1744	16	32000	1724	They got an RPG!
+3	1760	48	32000	5172	Taking heavy RPG fire. Shots are coming from above.
+3	1808	16	32000	1724	I'm pinned down!
+3	1824	48	32000	5172	Area secure, advancing to next level, over.
+3	1872	32	32000	3448	Get rounds on that window!
+3	1904	32	32000	3448	They're everywhere! I need support!
+3	1936	32	32000	3448	Zone secured. Proceeding to next area.
+3	1968	32	32000	3448	Incoming! I got incoming!
+3	2000	16	32000	1724	I'll go!
+3	2016	16	32000	1724	Enemy down!
+3	2032	16	32000	1724	Running low on ammo!
+4	0	32	32000	3448	Hold your position! Do not fucking drop back!
+4	32	16	32000	1724	Moving in.
+4	48	32	32000	3448	Stay alert, pick your targets. Short, controlled bursts.
+4	80	16	32000	1724	I'll bug you!
+4	96	16	32000	1724	Target cleared, I got the lead.
+4	112	16	32000	1724	Cover and fire!
+4	128	32	32000	3448	the entrance. I'll take point.
+4	160	32	32000	3448	Negative, hold your position!
+4	192	48	32000	5172	Orders are to hold! Do not enter that building! Keller!
+4	240	16	32000	1724	Copy.
+4	256	48	32000	5172	First level clear. Proceeding to next area. Stand by for update. Over.
+4	304	32	32000	3448	McCarver, are you still there?
+4	336	48	32000	5172	I pushed through most of the structure. Will advise once the package is secure. Out.
+4	384	48	32000	5172	McCarver, I'm coming out. Hold fire.
+4	432	32	32000	3448	Watch your space, and I don't wanna get caught up in all this shit.
+4	464	32	32000	3448	Copy. Let's not get caught sleeping.
+4	496	48	32000	5172	Four, take the right flank, I'll take the left. Three, assault the gun emplacement, copy?
+4	544	112	32000	12068	Good work, 3. Secure the location. Do not let anything go in or come out. 3, do you copy? I said hold your position. Goddammit, 3, hold your position!
+4	656	32	32000	3448	Bravo Three, Sitrep, over.
+4	688	48	32000	5172	Keller, whatever you're doing, do it fast. Hostile reinforcements headed this way.
+4	736	96	32000	10344	This is McCarver. We've got multiple hostiles trying to get into the building. We'll try to hold them off. We'll try, but we're receiving heavy fire. Do you copy?
+4	832	48	32000	5172	Copy that. We got a defensive perimeter established around the building. Over.
+4	880	32	32000	3448	And maybe they're getting ready for a garage sale.
+4	912	112	32000	12068	2-1, stand by. I think I got something. Bad news. I got tracks all over the place. Fresh. Maybe platoon size plus and strength.
+4	1024	16	32000	1724	Five by five, copy.
+4	1040	32	32000	3448	This fucking better be worth it, Keller.
+4	1072	32	32000	3448	Come on, hurry the fuck up!
+4	1104	32	32000	3448	Advance to contact, over.
+4	1136	32	32000	3448	Stay down, I think we got movement up ahead.
+4	1168	32	32000	3448	Someone get on that flank!
+4	1200	32	32000	3448	God dammit, somebody take out that RPG!
+4	1232	32	32000	3448	Catwalk above! Catwalk above!
+4	1264	32	32000	3448	He's above you, above you!
+4	1296	32	32000	3448	Shooter above! Shooter above!
+4	1328	32	32000	3448	In the window in the window RPG
+4	1360	32	32000	3448	RPG, cover that fucking window!
+4	1392	32	32000	3448	Get out of there, move!
+4	1424	32	32000	3448	Drop that drop that
+4	1456	16	32000	1724	Where are they coming from?
+4	1472	16	32000	1724	Fall back to cover!
+4	1488	32	32000	3448	I'm on your left! On your left!
+4	1520	32	32000	3448	Where the fuck did that come from?
+4	1552	16	32000	1724	Shooter Down!
+4	1568	32	32000	3448	Get those heads down, I'm moving the flame.
+4	1600	32	32000	3448	RETURN FIRE! RETURN FIRE GOD DAMMIT!
+4	1632	32	32000	3448	Keller! Take out the shooter behind that cover!
+4	1664	32	32000	3448	Ah, fuck, I'm hit!
+4	1696	32	32000	3448	Behind the truck! Someone take him!
+4	1728	32	32000	3448	Get out of there! Move!
+4	1760	16	32000	1724	Take out the cover!
+4	1776	16	32000	1724	Move it!
+4	1792	16	32000	1724	Covering!
+4	1808	16	32000	1724	I'm on it.
+4	1824	16	32000	1724	Heads up, he's on the catwalk!
+4	1840	16	32000	1724	I got it.
+4	1856	16	32000	1724	Roger that.
+4	1872	32	32000	3448	Negative, I'm pinned down, I need cover now!
+4	1904	32	32000	3448	Negative, I do not have the shot.
+4	1936	32	32000	3448	Copy that, I have him on view.
+4	1968	16	32000	1724	Stop it! Stop it!
+4	1984	16	32000	1724	I'm dry out.
+4	2000	16	32000	1724	Changing mags!
+4	2016	16	32000	1724	Conserve your ammo!
+4	2032	32	32000	3448	Cover me! I'm gonna try and flank 'em!
+4	2064	32	32000	3448	We got a machine gun, take out.
+4	2096	16	32000	1724	Take out that gun!
+5	0	32	32000	3448	Incoming! I got incoming!
+5	32	48	32000	5172	Keep your head on a swivel. Intel reports snipers in the area.
+5	80	32	32000	3448	Hold. Enemy patrol ahead.
+5	112	80	32000	8620	Shit! Take cover! Take cover! Shoot her on your point! Use the ground! Stay off the road!
+5	192	32	32000	3448	Shooter knows what he's doing. Keep your head down.
+5	224	64	32000	6896	Contact! Target 100 building to your front, 2 o'clock!
+5	288	32	32000	3448	Clear the structure, over.
+5	320	64	32000	6896	3, this is 2-1. Secure that weapon. We may need the standoff distance.
+5	384	48	32000	5172	Six, wait for my command.
+5	432	32	32000	3448	Take 'em out!
+5	464	32	32000	3448	Target down on my position.
+5	496	64	32000	6896	Shoot her in the tower to my front. Do not cross open ground. I'll cover. Move now!
+5	560	32	32000	3448	Multiple shooters!
+5	592	64	32000	6896	This is 2-1. Enemy advancing. 12 o'clock. Pick your targets. Fire at will.
+5	656	32	32000	3448	Watch your right arm. Multiple targets.
+5	688	80	32000	8620	Cease fire! Cease fire! Ground clear! Move out! Intel reports a tunnel system in the basement.
+5	768	48	32000	5172	This area is a hotbed for sniper activity. Don't let them get a beat on you.
+5	816	64	32000	6896	Use the trenches for cover. Don't give away your position unless you have a clear shot.
+5	880	16	32000	1724	Incoming!
+5	896	48	32000	5172	Contact! Enemy advancing! On your own time! Fire!
+5	944	32	32000	3448	Take cover!
+5	976	48	32000	5172	We're getting close. We can access the steelworks through the network ahead.
+5	1024	32	32000	3448	Sniper! On your left!
+5	1056	32	32000	3448	You got another one on your right!
+5	1088	48	32000	5172	That's the building we want. Sweep and clear the area.
+5	1136	80	32000	8620	Area's secure. Let's move out. The tunnel network will get you to the steelworks. I'll RV with you there. Don't get lost.
+5	1216	48	32000	5172	Yeah, well, either way, I don't like it.
+5	1264	32	32000	3448	Real people person, I take it.
+5	1296	48	32000	5172	I'll keep that in mind. How long you been on the tomb?
+5	1344	16	32000	1724	Copy that.
+5	1360	48	32000	5172	LT, you see this? Multiple targets bearing down on our location.
+5	1408	16	32000	1724	Copy that.
+5	1424	32	32000	3448	We got more hostiles coming in.
+5	1456	48	32000	5172	Check it out. I thought places like this only existed in movies.
+5	1504	64	32000	6896	You kidding me? This is my kind of place. Full of the type of people I like. Quiet and out of the way.
+5	1568	32	32000	3448	You don't get to where I am by beating a bleeding heart.
+5	1600	32	32000	3448	Long enough to forget what's right and wrong.
+5	1632	16	32000	1724	Take him out.
+5	1648	32	32000	3448	Take out the headstones, Keller.
+5	1680	32	32000	3448	Cover your arc, I got the other side.
+5	1712	16	32000	1724	Moving now!
+5	1728	32	32000	3448	Steady up, we just got made!
+5	1760	16	32000	1724	Move to better cover!
+5	1776	32	32000	3448	Give me covering fire!
+5	1808	32	32000	3448	Enemy seen, get ready!
+5	1840	16	32000	1724	Cover me, I'm moving in!
+5	1856	16	32000	1724	Fire!
+5	1872	16	32000	1724	Drop him!
+5	1888	16	32000	1724	Waste them!
+5	1904	32	32000	3448	Return fire! Return fire! God damn it!
+5	1936	48	32000	5172	Stand by to reorg. Let's push through an RV on the other side.
+5	1984	32	32000	3448	Swing around they're trying to flank us
+5	2016	16	32000	1724	Let's go, goddammit!
+5	2032	32	32000	3448	Multiple hostiles inbound.
+5	2064	32	32000	3448	Get those heads down, I'm moving to flank!
+5	2096	32	32000	3448	They're moving on the flank! Get out of there!
+5	2128	16	32000	1724	Receiving heavy fire.
+5	2144	32	32000	3448	Shit, they're all around us!
+5	2176	16	32000	1724	They got us surrounded!
+5	2192	48	32000	5172	Multiple shooters on the point! I'm pinned down! I'm pinned down!
+5	2240	16	32000	1724	Drop back! Drop back!
+5	2256	32	32000	3448	Front and center, give me supporting fire!
+5	2288	32	32000	3448	They're everywhere! I need support!
+5	2320	16	32000	1724	Take out that gun!
+5	2336	32	32000	3448	We got a machine gun! Take it out! Take it out!
+5	2368	32	32000	3448	Take out that machine gun!
+5	2400	32	32000	3448	Keller, take out the shooter behind that cover!
+5	2432	16	32000	1724	Target down.
+5	2448	48	32000	5172	We got heavy fire coming in from that high ground. Tell her, can you get to him?
+5	2496	16	32000	1724	I got him!
+5	2512	16	32000	1724	Enemy down.
+5	2528	32	32000	3448	Get a frag on that position!
+5	2560	16	32000	1724	Target down!
+5	2576	32	32000	3448	Get out of there! Move!
+5	2608	32	32000	3448	Cover my flank! I'm moving up!
+5	2640	32	32000	3448	Running low on ammo!
+5	2672	48	32000	5172	Shit! They got reinforcements! Frag them!
+5	2720	32	32000	3448	I gotta stop it! Cover me!
+6	0	32	32000	3448	Check fire on the flag.
+6	32	32	32000	3448	Copy that, Alpha.
+6	64	32	32000	3448	Alpha Argo, moving now.
+6	96	16	32000	1724	On the right! On the right!
+6	112	16	32000	1724	They got us dialed in!
+6	128	16	32000	1724	I'm hit! I'm hit!
+6	144	16	32000	1724	Abort! Abort!
+6	160	32	32000	3448	Bravo Team! Come in! This is...
+6	192	16	32000	1724	Did you see that?
+6	208	32	32000	3448	Man down! Man down!
+6	240	32	32000	3448	There's too many of them!
+6	272	16	32000	1724	We need support!
+6	288	32	32000	3448	2IC is down! Get the fuck outta here!
+6	320	32	32000	3448	Alpha moving now.
+6	352	16	32000	1724	Alpha moving into position.
+6	368	16	32000	1724	They got us an infill rate!
+6	384	32	32000	3448	Watch your crossfire! Look out! Look out!
+6	416	32	32000	3448	Fall back! Fall back!
+6	448	48	32000	5172	Bravo team, under heavy fire! We're taking casualties!
+6	496	32	32000	3448	MOVE! MOVE! MOVE!
+6	528	32	32000	3448	All call signs, suppressors on.
+6	560	32	32000	3448	Multiple targets on your 12 and 6.
+6	592	32	32000	3448	Watch your arcs! Watch your arcs!
+6	624	16	32000	1724	Look out!
+6	640	16	32000	1724	Copy that.
+6	656	48	32000	5172	This is Bravo sweeping containers. No contact.
+6	704	16	32000	1724	Target down.
+6	720	16	32000	1724	Contact!
+6	736	16	32000	1724	And a bush!
+6	752	16	32000	1724	Check! Check! Check!
+6	768	16	32000	1724	Incoming!
+6	784	48	32000	5172	Taking heavy RPG fire! Shots coming from above!
+6	832	48	32000	5172	Someone get me covered in fire! I got an RPG above me!
+6	880	32	32000	3448	Target is down! Target down!
+6	912	16	32000	1724	Enemy down.
+6	928	32	32000	3448	Hang tight and cover the point.
+6	960	32	32000	3448	Oh, goddammit, get over there!
+6	992	32	32000	3448	So you're on it. Give me some cover over here.
+6	1024	32	32000	3448	Multiple hostiles inbound.
+6	1056	48	32000	5172	Multiple shooters on the point! I'm pinned down! I'm pinned down!
+6	1104	32	32000	3448	I'm on flank! I'm on flank!
+6	1136	16	32000	1724	He's moving on the flank!
+6	1152	32	32000	3448	Hostiles trying to flank! Adjust fire!
+6	1184	32	32000	3448	Someone get on that flank, they're trying to get behind us!
+6	1216	32	32000	3448	Get over here and get me covering fire!
+6	1248	16	32000	1724	Move it out! Cover me!
+6	1264	32	32000	3448	Let's go, Bravo team. Move it.
+6	1296	16	32000	1724	Go go go!
+6	1312	32	32000	3448	Push through that area! Come on, Bravo Three!
+6	1344	32	32000	3448	Fuck! Gun jam! Gun jam!
+6	1376	16	32000	1724	Aye, aye, cover me!
+6	1392	16	32000	1724	Running low on ammo!
+6	1408	32	32000	3448	Get down! Get down! Grenade!
+6	1440	32	32000	3448	God! I'm hit! I'm hit! I need covering fire!
+6	1472	32	32000	3448	Ah! Fuck! Come here!
+6	1504	32	32000	3448	Killer! Take out the shooter behind that cover!
+6	1536	16	32000	1724	Move in!
+6	1552	16	32000	1724	Discovery!
+6	1568	32	32000	3448	They're moving on the flank! Get the fuck over there!
+6	1600	16	32000	1724	Give me cover and fire!
+6	1616	32	32000	3448	Frag them out Frag them out!
+6	1648	16	32000	1724	Above you! Above you!
+6	1664	16	32000	1724	Get out of there, now!
+6	1680	32	32000	3448	Keller, I'm gonna flush 'em out. Stand by.
+7	0	16	32000	1724	They're using shields!
+7	16	32	32000	3448	I'm going in.
+7	48	32	32000	3448	Keep tight. Watch those corners.
+7	80	16	32000	1724	Careful.
+7	96	16	32000	1724	Target, 12 o'clock.
+7	112	16	32000	1724	RPG!
+7	128	32	32000	3448	Concentrate on the doorway!
+7	160	32	32000	3448	Close it up. Watch those gaps.
+7	192	32	32000	3448	Sniper above you!
+7	224	16	32000	1724	Incoming!
+7	240	32	32000	3448	There's the entrance, up ahead!
+7	272	16	32000	1724	Fire in the hole!
+7	288	64	32000	6896	We gotta get to the other side of that bridge. Prepare to advance. Drop everything that moves.
+7	352	48	32000	5172	By asking politely, how the fuck do you think? Now get ready to move.
+7	400	48	32000	5172	They'll have snipers on the superstructure so make sure you cover our heads.
+7	448	32	32000	3448	Re-org on the other side.
+7	480	16	32000	1724	You guys see that?
+7	496	32	32000	3448	Go for the head. They got vests on.
+7	528	48	32000	5172	Hold your fire. Hold your fire. Area secure.
+7	576	80	32000	8620	I don't want to rain on your fucking parade, but how the fuck are you planning to get by all those swinging dicks?
+7	656	32	32000	3448	See you assholes on the other side.
+7	688	32	32000	3448	Fucking minefield!
+7	720	16	32000	1724	Hostiles inbound!
+7	736	32	32000	3448	RPG, keep moving!
+7	768	16	32000	1724	Move him!
+7	784	32	32000	3448	Fire! Fire! God damn it!
+7	816	32	32000	3448	Moving! Cover me!
+7	848	32	32000	3448	Get out of there, they're gonna cut you to pieces!
+7	880	32	32000	3448	Cover me! I'm taking out the RPG above!
+7	912	32	32000	3448	Move, move, move! God damn it!
+7	944	32	32000	3448	Where the fuck did that come from?
+7	976	32	32000	3448	Return fire! Return fire, goddammit!
+7	1008	48	32000	5172	Alright, let's bring it in and tighten it up. Cover your side.
+7	1056	32	32000	3448	Let's go, let's go!
+7	1088	32	32000	3448	Enemy down!
+7	1120	32	32000	3448	Target is down! Target down!
+7	1152	48	32000	5172	Spread out and do a loose file. We don't want to get caught off guard.
+7	1200	32	32000	3448	Get on the flank! They're cutting around!
+7	1232	32	32000	3448	They got an RPG!
+7	1264	32	32000	3448	Now get your fucking ass moving!
+7	1296	32	32000	3448	Get rounds on that target!
+7	1328	32	32000	3448	You've been covering fire!
+7	1360	32	32000	3448	You're gonna get cut to pieces! Drop the guy in the high ground!
+7	1392	32	32000	3448	I got an RPG in the window, someone drop him!
+7	1424	32	32000	3448	Get the fuck out of there!
+7	1456	32	32000	3448	Get out of there!
+7	1488	32	32000	3448	Stay tight!
+7	1520	32	32000	3448	Steady up, we just got made!
+7	1552	32	32000	3448	Target, take cover.
+7	1584	32	32000	3448	Get cover, we got movement up ahead.
+7	1616	32	32000	3448	Incoming! I got incoming!
+7	1648	32	32000	3448	Hold your position.
+7	1680	32	32000	3448	They got tech shields.
+7	1712	32	32000	3448	Go for the head, they got party armor.
+7	1744	16	32000	1724	Shoot her down!
+7	1760	16	32000	1724	Target down!
+7	1776	32	32000	3448	All call signs, suppressors on.
+7	1808	32	32000	3448	They're wearing masks! Go for the head!
+7	1840	16	32000	1724	Copy, moving out!
+7	1856	32	32000	3448	TURN IT DOWN! TURN IT DOWN! MOVE! MOVE! MOVE!
+7	1888	32	32000	3448	Draw their fire, I'll take them when they move.
+7	1920	16	32000	1724	Take out that gun!
+7	1936	16	32000	1724	Enemy down!
+7	1952	32	32000	3448	We got a machine gun! Take cover!
+7	1984	48	32000	5172	Hey, all call signs hold! Keller, clear the point!
+7	2032	32	32000	3448	Get out of there!
+7	2064	32	32000	3448	Hold your position! Do not fucking drop back!
+7	2096	32	32000	3448	Hey, get a frame on that position!
+7	2128	32	32000	3448	Take cover! Where the fuck did that come from?
+7	2160	32	32000	3448	So we'll get on that flight!
+7	2192	16	32000	1724	I got him!
+7	2208	16	32000	1724	Shoot her down!
+7	2224	16	32000	1724	Target down!
+7	2240	32	32000	3448	Cover my flank, I'm moving up!
+7	2272	32	32000	3448	Get out of there, Keller! They're gonna cut you to pieces!
+7	2304	32	32000	3448	Get out of the fucking corner!
+7	2336	32	32000	3448	We have to take them out!
+7	2368	32	32000	3448	Advance to contact, over!
+7	2400	48	32000	5172	Hey, somebody to reorg! Let's push through the RV on the other side!
+7	2448	32	32000	3448	Get in support!
+7	2480	32	32000	3448	GET ME SOME SUPPORTING FIRE FROM THAT CENTER!
+7	2512	48	32000	5172	Eyes up! Move! Move! Move! I need support!
+7	2560	32	32000	3448	God damn it, keller! Cut off the-
+7	2592	32	32000	3448	On the flank! On the flank!
+7	2624	32	32000	3448	Drop back to cover! Move now!
+7	2656	16	32000	1724	Move your ass!
+7	2672	32	32000	3448	OVERWATCH ADVISE! HUSTLES ON THE MOVE!
+7	2704	32	32000	3448	I'm pinned down! Shoot her above us!
+8	0	32	32000	3448	Copy that. Sweeping the ruins.
+8	32	48	32000	5172	I've got a bunker entrance. Moving in. Standing by.
+8	80	112	32000	12068	Advancing below ground. Radio is becoming broken and unclear. We'll update as needed. Over. Did you copy my last? Over. Nothing heard. Out.
+8	192	64	32000	6896	This is 3. I've got a major bunker here. I'm clearing the area. Do you copy? Over.
+8	256	32	32000	3448	Heavy resistance, engaging targets, over.
+8	288	80	32000	8620	I found a ramp going further down. Proceeding to substructure. Do you read me? Over. Nothing heard. Three out.
+8	368	80	32000	8620	This is 3. This is 3. Package may be on site. I say again, package may be on site. I am advancing to contact. Stand by.
+8	448	64	32000	6896	This is Bravo three target down. I say again target is down exiting structure
+8	512	80	32000	8620	Let's not let this asshole get away again. Three, you've got the honors. We'll secure the perimeter in case the shitbag tries to run.
+8	592	48	32000	5172	Get on your fucking position! You know what to do, Keller.
+8	640	32	32000	3448	I'm starting to think you may not like me.
+8	672	64	32000	6896	Bravo 3, I just had a bunch of hostiles run past my position toward the courtyard. A few slip by, you should see them any second.
+0	9248	336	33169	17464	Hammerhead 6-2, this is Alpha-2, I need my eyes on 2-5. Hammerhead 6-2, this is 2-5, we're pinned down! I have multiple casualties! Request behind him head back on our location! 5-1, 5-1, this is 3-1. I'm on the other side of the block. I'm coming to you now, over.
