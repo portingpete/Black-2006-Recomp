@@ -308,7 +308,8 @@ manually. Local settings live in `local/`
 and diagnostic logs in `reports/`. Save-related data uses `save/` as well as
 `game/UDATA/` and `game/TDATA/` through the native partition mapping. Close the
 game and back up all three data directories before moving or removing the
-project folder if you want to keep your progress.
+project folder if you want to keep your progress. SFX and music volumes are kept in
+`local/audio.ini` whether or not a profile is saved; see the [audio settings tests](tests/audio_settings/README.md).
 
 **Options > CONTROLS** replaces the console's Controller Setup page, in the title
 menu and the pause menu's options. Its pages use the game's own menu look.

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**SFX and music volumes are kept.** The game's own save never brought them back, so they returned to full at every
+start. They are now kept in `local/audio.ini`, saved when changed in either sound menu and restored at startup, with
+or without a saved profile.
+
 ## 0.1.0-alpha.5 — 2026-10-22
 
 **First C++ BLACK Launcher release on portingpete/Black-2006-Recomp.** The starter
