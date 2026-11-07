@@ -5,6 +5,9 @@
 **Fewer audio-lock stalls.** The APU interrupt no longer waits for the audio frame
 lock at interrupt level, which removes long freezes and FPS drops on low-power CPUs.
 
+**Less CPU while waiting.** The main thread now sleeps while it waits for pushbuffer
+space, instead of spinning for about half of each frame.
+
 ## 0.1.0-alpha.5 — 2026-10-22
 
 **First C++ BLACK Launcher release on portingpete/Black-2006-Recomp.** The starter
