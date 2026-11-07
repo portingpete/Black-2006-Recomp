@@ -554,6 +554,22 @@ int black_idle_yield_skip(void)
     return !keep && black_step_halved && black_hz >= 120;
 }
 
+/* The D3D pushbuffer wait at 0x0026CD80 polls GET until the ring has room. That
+ * is where the main thread spends a frame's spare time, about half of it at 30 Hz:
+ * spin for a moment, as a short wait ends quickly, then give the core back. */
+extern int xbox_IdleWait(unsigned int microseconds);
+
+void black_ring_wait(void)
+{
+    static unsigned spins;
+    if (++spins < 200) {
+        YieldProcessor();
+        return;
+    }
+    spins = 0;
+    if (!xbox_IdleWait(100)) YieldProcessor();
+}
+
 /* BEGIN BLACK_WEAPON_RUNTIME_MODES */
 /* Silver weapon selection is native by default; force modes affect this process only. */
 int black_silver_weapons_mode(void)
