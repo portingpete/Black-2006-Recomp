@@ -6,6 +6,20 @@
 start. They are now kept in `local/audio.ini`, saved when changed in either sound menu and restored at startup, with
 or without a saved profile.
 
+**Sprint and jump (optional).** Hold Sprint (Left Shift) while moving to run faster, and press Jump (Space) on the
+ground to jump. Both are off by default; turn them on in the launcher's Gameplay settings and rebind the keys in its
+Controls. Keyboard and mouse only, for player one.
+
+**Gameplay subtitles.** Mission dialogue, allies and radio transmissions are captioned in game, in English and
+Brazilian Portuguese (`subtitles/<language>/gameplay.tsv`; see `subtitles/README-gameplay.md` to add a language).
+The launcher's **SUBTITLES** setting turns all subtitles, cutscenes included, on or off; it is on by default.
+
+**FREE camera range in Photo Mode.** After 30 M, the camera range offers FREE, which lifts the distance and height
+limits around where Photo Mode started.
+
+**Shader precompilation can be turned off.** Graphics settings have **PRECOMPILE SHADERS AT STARTUP**, on by default.
+Off starts the game sooner after a rebuild or a cleared cache, at the cost of shader hitches while playing.
+
 ## 0.1.0-alpha.5 — 2026-10-22
 
 **First C++ BLACK Launcher release on portingpete/Black-2006-Recomp.** The starter

@@ -15,6 +15,10 @@
 #include <windows.h>
 
 static int g_fail, g_pass;
+/* Captions are unrelated to camera/menu tests; the game keeps its production caption object. */
+int pc_subtitles_enabled(void) { return 0; }
+int pc_speech_subtitle(uint16_t *out, unsigned capacity, int paused)
+{ (void)paused; if (out && capacity) out[0] = 0; return 0; }
 #define CHECK(c) do { if (c) g_pass++; else { g_fail++; printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); } } while (0)
 #define CLOSE_TO(a, b, e) (fabs((double)(a) - (double)(b)) <= (e))
 
@@ -100,6 +104,60 @@ static void test_camera(void)
     for (i = 0; i < 20; i++) { memcpy(m, game, sizeof(m)); frame(m, 60); }
     pc_input_key_event(0x12, 0, 0, 0);
     CHECK(m[3][1] <= 2.0 + 6.0 + 1e-3 && m[3][1] > 7.0);
+    /* FREE is after 30 M: no horizontal, upper or lower tether. */
+    {
+        char v[32];
+        CHECK(pc_photo_row_change(PCP_ROW_LIMIT, 1)); /* 20 M */
+        CHECK(pc_photo_row_change(PCP_ROW_LIMIT, 1)); /* 30 M */
+        pc_photo_row_value(PCP_ROW_LIMIT, v, sizeof(v));
+        CHECK(!strcmp(v, "30 M"));
+        CHECK(pc_photo_row_change(PCP_ROW_LIMIT, 1));
+        pc_photo_row_value(PCP_ROW_LIMIT, v, sizeof(v));
+        CHECK(!strcmp(v, "FREE") && !pc_photo_row_change(PCP_ROW_LIMIT, 1));
+        pc_photo_reset();
+        memcpy(m, game, sizeof(m)); pc_photo_camera(m, 0.7f);
+        pc_input_key_event(0x2A, 0, 1, 0); /* Shift: 18 m/s */
+        pc_input_key_event(0x11, 0, 1, 0); /* W */
+        pc_input_key_event(0x12, 0, 1, 0); /* E */
+        for (i = 0; i < 40; i++) { memcpy(m, game, sizeof(m)); frame(m, 60); }
+        pc_input_key_event(0x11, 0, 0, 0);
+        pc_input_key_event(0x12, 0, 0, 0);
+        dist = hypot(m[3][0] - 10.0, m[3][2] + 5.0);
+        CHECK(dist > 35.0 && m[3][1] > 2.0 + 30.0);
+        pc_input_key_event(0x10, 0, 1, 0); /* Q */
+        for (i = 0; i < 65; i++) { memcpy(m, game, sizeof(m)); frame(m, 60); }
+        pc_input_key_event(0x10, 0, 0, 0);
+        pc_input_key_event(0x2A, 0, 0, 0);
+        CHECK(m[3][1] < 2.0 - 10.0);
+        /* The same setting applies after reopening; reset still returns to the game. */
+        pc_photo_set_shown(0);
+        pc_photo_set_shown(1);
+        memcpy(m, game, sizeof(m)); pc_photo_camera(m, 0.7f);
+        CHECK(same(m, game, 1e-4));
+        pc_photo_row_value(PCP_ROW_LIMIT, v, sizeof(v));
+        CHECK(!strcmp(v, "FREE"));
+        /* Switching back immediately restores every bounded radius and height band. */
+        pc_input_key_event(0x2A, 0, 1, 0);
+        pc_input_key_event(0x11, 0, 1, 0);
+        pc_input_key_event(0x12, 0, 1, 0);
+        for (i = 0; i < 40; i++) { memcpy(m, game, sizeof(m)); frame(m, 60); }
+        pc_input_key_event(0x11, 0, 0, 0);
+        pc_input_key_event(0x12, 0, 0, 0);
+        pc_input_key_event(0x2A, 0, 0, 0);
+        for (i = 0; i < 4; i++) {
+            const double ranges[] = { 30, 20, 12, 6 };
+            CHECK(pc_photo_row_change(PCP_ROW_LIMIT, -1));
+            memcpy(m, game, sizeof(m)); frame(m, 5);
+            dist = hypot(m[3][0] - 10.0, m[3][2] + 5.0);
+            CHECK(CLOSE_TO(dist, ranges[i], 1e-3));
+            CHECK(CLOSE_TO(m[3][1], 2.0 + ranges[i] * 0.5, 1e-3));
+        }
+        CHECK(!pc_photo_row_change(PCP_ROW_LIMIT, -1));
+        CHECK(pc_photo_row_change(PCP_ROW_LIMIT, 1)); /* original 12 M */
+        pc_photo_reset();
+        memcpy(m, game, sizeof(m)); pc_photo_camera(m, 0.7f);
+        CHECK(same(m, game, 1e-4));
+    }
     /* zoom: the wheel narrows, within its bounds */
     CHECK(CLOSE_TO(pc_photo_zoom(), 1.0, 1e-6));
     pc_input_wheel_event(1);
@@ -226,6 +284,17 @@ static void test_panel(const char *definition_path)
     pc_menu_test_dump(dump, sizeof(dump));
     CHECK(strstr(dump, "FIELD OF VIEW") && strstr(dump, "EXIT PHOTO MODE") && strstr(dump, "70"));
     CHECK(!strstr(dump, "CONTINUE"));
+    /* Select FREE through the actual panel and verify English and Portuguese values. */
+    for (int i = 0; i < 4; i++) press(PCM_ACT_DOWN, "PauseMenu");
+    for (int i = 0; i < 3; i++) press(PCM_ACT_RIGHT, "PauseMenu");
+    pc_menu_test_dump(dump, sizeof(dump));
+    CHECK(strstr(dump, "CAMERA RANGE") && strstr(dump, "FREE"));
+    _putenv("RECOMP_LANGUAGE=pt-BR");
+    tick("PauseMenu");
+    pc_menu_test_dump(dump, sizeof(dump));
+    CHECK(strstr(dump, "LIVRE"));
+    _putenv("RECOMP_LANGUAGE=en-US");
+    for (int i = 0; i < 4; i++) press(PCM_ACT_UP, "PauseMenu");
     press(PCM_ACT_RIGHT, "PauseMenu");                                    /* field of view, wider */
     CHECK(pc_photo_zoom() > 1.0f);
     pc_photo_hide_panel();
@@ -324,6 +393,8 @@ int main(int argc, char **argv)
     if (load_fonts()) {
         render(argv[1], outdir, 0, "panel");
         render(argv[1], outdir, 5, "panel-take");
+        _putenv("RECOMP_LANGUAGE=pt-BR");
+        render(argv[1], outdir, 4, "panel-free-pt");
     } else {
         printf("(BLACK_GAME_DIR not set: the panel is not rendered)\n");
     }

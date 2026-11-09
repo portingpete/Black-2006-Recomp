@@ -108,6 +108,7 @@ void SettingsFlow::save() {
 }
 
 void SettingsFlow::open(Section section) {
+    m_settings = core::loadSettings(m_project);
     if (section == Section::Hub) {
         m_lastSection = m_section;
     }
@@ -311,6 +312,11 @@ std::vector<SettingsFlow::Option> SettingsFlow::graphicsOptions() {
                     [&s, distances] { return distances[indexOf(distances, s.lod_distance)].label; },
                     [&s, distances](int step) { cycle(distances, s.lod_distance, step); },
                     {}});
+    rows.push_back({tr("PRECOMPILE SHADERS AT STARTUP"),
+                    tr("Applies next time you start the game. On prepares recorded shaders before playing. Off skips "
+                       "that preparation; shaders needed during play are still compiled."),
+                    [&s] { return std::string(s.precompileShaders ? tr("ON") : tr("OFF")); },
+                    [&s](int) { s.precompileShaders = !s.precompileShaders; }, gpu});
     return rows;
 }
 
@@ -374,6 +380,16 @@ std::vector<SettingsFlow::Option> SettingsFlow::gameplayOptions() {
                       {}};
     };
     return {
+        {tr("SUBTITLES"),
+         tr("Show subtitles for dialogue and cutscenes. Applies the next time you start the game."),
+         [&s] { return std::string(s.subtitles ? tr("ON") : tr("OFF")); },
+         [&s](int) { s.subtitles = !s.subtitles; },
+         {}},
+        pick(tr("SPRINT"),
+             tr("Hold the Sprint key while moving to run faster. Default: Left Shift. Off keeps original movement."),
+             s.sprint, {{"off", tr("OFF")}, {"on", tr("ON")}}),
+        pick(tr("JUMP"), tr("Press the Jump key on the ground to jump. Default: Space. Release before jumping again."),
+             s.jump, {{"off", tr("OFF")}, {"on", tr("ON")}}),
         pick(tr("AIM MODE"), tr("Toggle keeps the original aim behavior. Hold aims only while the aim button is held."),
              s.aimMode, {{"toggle", tr("TOGGLE")}, {"hold", tr("HOLD")}}),
         pick(tr("CROSSHAIR"),
@@ -654,6 +670,7 @@ std::vector<std::string> SettingsFlow::slotsOf(std::size_t action) const {
 }
 
 void SettingsFlow::setSlot(std::size_t action, std::size_t slot, const std::string& token) {
+    m_settings = core::loadSettings(m_project);
     std::vector<std::string> keys = slotsOf(action);
     if (token.empty()) {
         if (slot < keys.size()) {
@@ -674,6 +691,7 @@ void SettingsFlow::setSlot(std::size_t action, std::size_t slot, const std::stri
 }
 
 void SettingsFlow::updateEdit() {
+    m_settings = core::loadSettings(m_project);
     const std::vector<Option> rows = options(m_section);
     if (m_entryRow >= rows.size() || !rows[m_entryRow].commit) {
         m_entry.end();
@@ -874,6 +892,8 @@ SettingsFlow::Outcome SettingsFlow::handle(MenuEvent event) {
     if (m_entry.active()) {
         return Outcome::Stay;
     }
+    // Preserve settings changed in the game while this launcher page was open.
+    m_settings = core::loadSettings(m_project);
     if (m_section == Section::Hub) {
         constexpr std::array kSections = {Section::Display,  Section::Graphics, Section::Controls,
                                           Section::Gameplay, Section::Game,     Section::Diagnostics};
