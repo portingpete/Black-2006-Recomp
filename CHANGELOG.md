@@ -23,8 +23,9 @@ Off starts the game sooner after a rebuild or a cleared cache, at the cost of sh
 **Fewer audio-lock stalls.** The APU interrupt no longer waits for the audio frame
 lock at interrupt level, which removes long freezes and FPS drops on low-power CPUs.
 
-**Less CPU while waiting.** The main thread now sleeps while it waits for pushbuffer
-space, instead of spinning for about half of each frame.
+**Less CPU while waiting.** Under Wine and Proton, the main thread sleeps while it waits for pushbuffer space,
+instead of spinning for about half of each frame, and so do the GPU pusher, GPU queue and acknowledgement threads when
+idle. Windows keeps the spin until this is measured there (`RECOMP_IDLE_WAIT=1` turns it on).
 
 ## 0.1.0-alpha.5 — 2026-10-22
 
