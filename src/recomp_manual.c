@@ -177,6 +177,12 @@ static const recomp_func_t g_itrace_wrappers[ITRACE_SLOTS] = {
 extern void sub_0014EB10_gen(void);
 extern void sub_0014EBF0_gen(void);
 extern void sub_00146EA0_gen(void);
+/* The speech subtitle hooks use these before the movie wrapper's own copies below, which stay there because
+ * tests/movie_skip extracts that wrapper from its declaration onwards. Identical redeclarations. */
+static int black_pc_ram_span(uint32_t address, uint32_t bytes);
+static void black_movie_skip_font(void);
+#define GUEST32(va) (*(uint32_t *)((uintptr_t)g_xbox_mem_offset + (va)))
+#define GUEST8(va) (*(uint8_t *)((uintptr_t)g_xbox_mem_offset + (va)))
 #include "black_speech_subtitles.inc"
 
 extern void sub_000C4570_gen(void);
