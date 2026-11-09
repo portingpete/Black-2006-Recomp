@@ -45,17 +45,12 @@ static int black_audio_sound_page(const char *page)
     return strstr(lower, "sound") != NULL || !strcmp(lower, "pausemenuoptionxbox");
 }
 
-/* When a volume is written. Only a change made on a sound page is the player's: the game's own changes
- * elsewhere are not saved. A change is written once the sliders have been still for a moment, or when the
- * page is left, so holding a slider writes the file once, not at every step. */
-#define BLACK_AUDIO_SETTLE_TICKS 15u
-
+/* When a volume is written. Only a change made on a sound page is the player's, and it is written at once;
+ * the game's own changes anywhere else are not saved over it. */
 typedef struct BlackAudioSaver {
     int live_sfx, live_music;  /* the values at the last tick */
-    int pend_sfx, pend_music;  /* the player's latest values, not yet written */
+    int pend_sfx, pend_music;  /* the player's latest values, to write */
     int file_sfx, file_music;  /* what the file holds (or the starting values, before any save) */
-    int pending;
-    unsigned still;            /* ticks on the page since the last change */
 } BlackAudioSaver;
 
 static void black_audio_saver_start(BlackAudioSaver *s, int sfx, int music)
@@ -71,20 +66,10 @@ static int black_audio_saver_tick(BlackAudioSaver *s, int sfx, int music, int on
     const int changed = sfx != s->live_sfx || music != s->live_music;
     s->live_sfx = sfx;
     s->live_music = music;
-    if (on_sound_page) {
-        if (changed) {
-            s->pend_sfx = sfx;
-            s->pend_music = music;
-            s->pending = 1;
-            s->still = 0;
-            return 0;
-        }
-        if (!s->pending || ++s->still < BLACK_AUDIO_SETTLE_TICKS) return 0;
-    } else if (!s->pending) {
-        return 0;
-    }
-    s->pending = 0;
-    return s->pend_sfx != s->file_sfx || s->pend_music != s->file_music;
+    if (!changed || !on_sound_page) return 0;
+    s->pend_sfx = sfx;
+    s->pend_music = music;
+    return sfx != s->file_sfx || music != s->file_music;
 }
 
 /* A new file put in place whole, so a crash cannot leave half of one. */
