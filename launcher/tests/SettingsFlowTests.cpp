@@ -38,7 +38,7 @@ TEST_CASE("Launcher graphics changes preserve settings changed during play") {
 
 }  // namespace
 
-TEST_CASE("Shader precompilation is optional, persistent and passed to the next launch") {
+TEST_CASE("Shader precompilation stays on by default, can be turned off and persists") {
     const black::tests::TempFolder folder;
     folder.write("CMakeLists.txt", "\n");
     folder.write("scripts/generate.py", "\n");
@@ -48,16 +48,20 @@ TEST_CASE("Shader precompilation is optional, persistent and passed to the next 
     black::app::SettingsFlow flow(*project);
     flow.handle({row(flow.page(), "GRAPHICS"), 0});
     const auto option = row(flow.page(), "PRECOMPILE SHADERS AT STARTUP");
-    CHECK(flow.page().rows[option].value == "OFF");
-    flow.handle({option, 1});
+    // On by default, as the game behaves without the setting (RECOMP_KGPU_PRECOMPILE unset).
+    CHECK(black::core::Settings{}.precompileShaders);
     CHECK(flow.page().rows[option].value == "ON");
+    flow.handle({option, 1});
+    CHECK(flow.page().rows[option].value == "OFF");
     const auto saved = black::core::loadSettings(*project);
-    CHECK(saved.precompileShaders);
-    CHECK(black::core::settingsFromJson(black::core::settingsJson(saved)).precompileShaders);
+    CHECK_FALSE(saved.precompileShaders);
+    CHECK_FALSE(black::core::settingsFromJson(black::core::settingsJson(saved)).precompileShaders);
     flow.handle({option, -1});
-    CHECK_FALSE(black::core::loadSettings(*project).precompileShaders);
+    CHECK(black::core::loadSettings(*project).precompileShaders);
+    // A settings file from before the option keeps precompilation on.
+    CHECK(black::core::settingsFromJson("{\"SettingsVersion\": 14}").precompileShaders);
     black::app::setLanguage("pt-BR");
-    CHECK(flow.page().rows[row(flow.page(), "PRÉ-COMPILAR SHADERS AO INICIAR")].value == "DESLIGADO");
+    CHECK(flow.page().rows[row(flow.page(), "PRÉ-COMPILAR SHADERS AO INICIAR")].value == "LIGADO");
     black::app::setLanguage("en-US");
 }
 

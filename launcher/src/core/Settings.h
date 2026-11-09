@@ -16,7 +16,7 @@ namespace black::core {
 struct Settings {
     // Game
     bool gpuRenderer = true;
-    bool precompileShaders = false;
+    bool precompileShaders = true;  // the game precompiles recorded shaders unless this is off
     bool smooth60 = true;
     int smoothHz = 0;  // with smooth60: 0 runs the game clock at 60 steps per second, else 120 or 240
     int threads = 4;

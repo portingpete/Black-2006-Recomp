@@ -1283,6 +1283,17 @@ static void test_native_row_services(void)
         } else CHECK(!*value && !pc_video_menu_row_change(row, 1));
     }
     CHECK(!strcmp(pc_video_menu_row_label(PCV_ROW_MODE), "WINDOW MODE"));
+    /* Portuguese has a label of its own for every row (SPRINT and JUMP were once missing, which
+     * shifted RESET and DONE off the end of the table). */
+    _putenv_s("RECOMP_LANGUAGE", "pt-BR");
+    for (row = 0; row < PCV_ROW_COUNT; row++) {
+        const char *label = pc_video_menu_row_label(row);
+        CHECK(label && *label);
+        if (label && row > 0) CHECK(strcmp(label, pc_video_menu_row_label(row - 1)) != 0);
+    }
+    CHECK(!strcmp(pc_video_menu_row_label(PCV_ROW_SPRINT), "CORRER"));
+    CHECK(!strcmp(pc_video_menu_row_label(PCV_ROW_JUMP), "PULAR"));
+    _putenv_s("RECOMP_LANGUAGE", "");
     CHECK(!*pc_video_menu_row_label(-1) && !*pc_video_menu_row_label(PCV_ROW_COUNT));
     CHECK(!*pc_video_menu_row_help(-1));
     generation = pc_video_generation();
