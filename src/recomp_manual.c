@@ -4671,9 +4671,14 @@ static void black_pc_movement(uint32_t controller)
     if (!black_pc_ram_span(actor, 0x3B0u) || GUEST32(actor + 0x324u) != controller ||
         GUEST8(actor + 0x3ADu) || GUEST8(actor + 0x3A7u) || GUEST32(actor + 0x384u) == 2u) goto done;
     if (video.sprint && sprint && !GUEST8(controller + 0x40u) && !GUEST8(controller + 0x45u)) {
+        /* Only a speed 1CC490 has just built is scaled, never one this already scaled: should a path in 1EC450
+         * skip that rebuild, the 1.5 does not compound from one update to the next. */
+        static uint32_t scaled_bits;
         const float speed = black_input_f32(controller + 0x20u);
-        if (isfinite(speed) && speed > 0.0f && speed < 20.0f)
+        if (GUEST32(controller + 0x20u) != scaled_bits && isfinite(speed) && speed > 0.0f && speed < 20.0f) {
             black_input_put_f32(controller + 0x20u, speed * 1.5f);
+            scaled_bits = GUEST32(controller + 0x20u);
+        }
     }
     if (video.jump && jump && GUEST8(actor + 0x3A0u) && !GUEST8(controller + 0x40u)) {
         proxy = GUEST32(actor + 0xB4u);
