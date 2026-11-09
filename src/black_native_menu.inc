@@ -1092,15 +1092,16 @@ static void black_native_menu_tick(uint32_t ui)
  * (0x114E00) copies the live volumes into what it compares, so a volume change alone never saves. A volume is
  * [0x2D45F0]+0x2015C (SFX) or +0x20160 (music), 0..1; 0x119B50 hands both to the sound engine.
  * They are kept in local\audio.ini instead, so they need no profile: read once the sound engine exists, written
- * whenever a menu changes them. RECOMP_AUDIO_INI overrides the path; RECOMP_BLACK_AUDIO_TRACE=1 logs each change of
- * the live values and the engine's copies (lab only). */
+ * when the player changes them on a sound page (black_audio_saver_tick). RECOMP_AUDIO_INI overrides the path (the
+ * launcher passes it); RECOMP_BLACK_AUDIO_TRACE=1 logs each change of the live values and the engine's copies (lab only). */
 #include "black_audio_settings.inc"
 
 extern void sub_00119B50(void);
 
 static void black_audio_settings_tick(uint32_t ui)
 {
-    static int restored, last_sfx, last_music, trace = -1;
+    static int restored, trace = -1;
+    static BlackAudioSaver saver;
     static uint32_t traced[4];
     static char path[MAX_PATH];
     const unsigned caller_csr = _mm_getcsr();
@@ -1123,16 +1124,20 @@ static void black_audio_settings_tick(uint32_t ui)
             black_guest_call(sub_00119B50, &none, NULL, 0, 0x00124330u);
             fprintf(stderr, "[AUDIO] %s: SFX %d, music %d\n", path, sfx, music);
         }
-        last_sfx = sfx;
-        last_music = music;
+        black_audio_saver_start(&saver, sfx, music);
         restored = 1;
     } else {
         const int sfx = black_audio_percent(GUEST32(game + 0x2015Cu)), music = black_audio_percent(GUEST32(game + 0x20160u));
-        if (sfx >= 0 && music >= 0 && (sfx != last_sfx || music != last_music)) {
-            const int saved = black_audio_save(path, sfx, music);
-            fprintf(stderr, "[AUDIO] SFX %d, music %d: %s %s\n", sfx, music, saved ? "saved to" : "COULD NOT SAVE", path);
-            last_sfx = sfx;
-            last_music = music;
+        char page[64];
+        bnm_get_string(ui + 0x3840u, page, sizeof(page));
+        if (sfx >= 0 && music >= 0 && black_audio_saver_tick(&saver, sfx, music, black_audio_sound_page(page))) {
+            const int saved = black_audio_save(path, saver.pend_sfx, saver.pend_music);
+            if (saved) {
+                saver.file_sfx = saver.pend_sfx;
+                saver.file_music = saver.pend_music;
+            }
+            fprintf(stderr, "[AUDIO] SFX %d, music %d: %s %s\n", saver.pend_sfx, saver.pend_music,
+                    saved ? "saved to" : "COULD NOT SAVE", path);
         }
     }
     if (trace < 0) { const char *e = getenv("RECOMP_BLACK_AUDIO_TRACE"); trace = e && *e == '1'; }
