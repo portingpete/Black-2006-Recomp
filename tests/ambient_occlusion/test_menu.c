@@ -24,6 +24,10 @@
 /* The menu regression never runs a movie, so keep the subtitle service inactive. */
 int pc_movie_skip_subtitle(uint16_t *out, unsigned capacity)
 { if (out && capacity) out[0] = 0; return 0; }
+int pc_movie_skip_active(void) { return 0; }
+int pc_subtitles_enabled(void) { return 0; }
+int pc_speech_subtitle(uint16_t *out, unsigned capacity, int paused)
+{ (void)paused; if (out && capacity) out[0] = 0; return 0; }
 
 static int g_fail, g_pass, g_have_files;
 #define CHECK(c, ...) do { if (c) g_pass++; else { g_fail++; printf("FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)

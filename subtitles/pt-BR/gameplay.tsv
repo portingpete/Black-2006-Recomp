@@ -1,0 +1,527 @@
+# level	sector	sectors	rate	end_ms	caption (Xbox spch_EN bank)
+0	0	16	32000	1030	O que é aquilo?
+0	16	32	32000	2890	Varredura final, sem contato. Câmbio.
+0	48	16	32000	1724	Copiado.
+0	64	32	32000	2750	Bravo aqui, estou entrando.
+0	96	16	32000	1724	Movendo para interceptar.
+0	112	16	32000	1724	Equipe Bravo, fiquem onde estão!
+0	128	32	32000	2110	Bravo, mantenham a posição e cubram a retaguarda deles.
+0	160	48	32000	4490	Charlie, situação! Equipe Charlie, situação!
+0	208	16	32000	1724	Alguém tem visual?
+0	224	32	32000	2310	Negativo. Mantenham a posição, Bravo.
+0	256	48	32000	5172	Respondam! Respondam! Estamos cercados! Sob fogo intenso! Precisamos de apoio!
+0	304	16	32000	1724	Qual a sua posição?
+0	320	16	32000	1724	Na sua retaguarda!
+0	336	16	32000	1370	À sua direita!
+0	352	16	32000	1710	FORA DE COMBATE!
+0	368	32	32000	3070	RPG no telhado, atirem!
+0	400	16	32000	1490	Estou entrando!
+0	416	16	32000	1724	São muitos!
+0	432	16	32000	1670	ESTÃO POR TODA PARTE!
+0	448	16	32000	1724	Eliminem os reforços!
+0	464	16	32000	1370	Mexam-se!
+0	480	32	32000	2070	Vamos resolver isso.
+0	512	16	32000	1724	Observem o setor esquerdo!
+0	528	16	32000	1290	Recarregando!
+0	544	16	32000	1724	Eles nos têm na mira.
+0	560	16	32000	1490	Alvo abatido!
+0	576	32	32000	2830	Atenção! Inimigo saindo do museu!
+0	608	32	32000	2150	Estão entrando pela parede!
+0	640	32	32000	2830	RPG na torre, às 12 horas!
+0	672	16	32000	1590	Quem está na vigília?
+0	688	16	32000	1724	Veículo neutralizado.
+0	704	32	32000	2610	Equipe Charlie em movimento, estamos com o ponto.
+0	736	32	32000	2350	Contato! Contato!
+0	768	32	32000	3030	Copiado, Delta cobrindo seu avanço.
+0	800	64	32000	6390	Estejam cientes, 2 alvos ainda no perímetro. O Alvo 4 acabou de entrar no prédio a oeste da Equipe Bravo.
+0	864	32	32000	2610	Tem um atirador na elevação! Eliminem-no!
+0	896	32	32000	3090	Mantenham a cabeça baixa! Tem um atirador na elevação!
+0	928	32	32000	2770	Cuidado! Atirador lá em cima! Atirador lá em cima!
+0	960	32	32000	2650	Aquele atirador lá em cima! Alguém elimine-o!
+0	992	48	32000	4010	Vamos ser massacrados. Derrubem o cara na elevação.
+0	1040	16	32000	1724	Voltem para a cobertura!
+0	1056	32	32000	2670	Cubram o flanco, ele está tentando nos contornar.
+0	1088	32	32000	3448	Fogo pesado, fogo pesado! Tiros vindo de cima.
+0	1120	32	32000	2410	Me deem cobertura, estou eliminando o atirador lá em cima.
+0	1152	32	32000	2290	Atirador em cima! Atirador em cima!
+0	1184	32	32000	2890	Mantenham a cabeça baixa, tem um RPG na elevação!
+0	1216	32	32000	2570	Tem um RPG lá em cima, alguém elimine-o!
+0	1248	32	32000	3448	Recebendo fogo pesado de RPG, os tiros vêm de cima.
+0	1280	32	32000	3050	Me deem cobertura! Estou eliminando o RPG lá em cima!
+0	1312	16	32000	1724	Atirador na janela!
+0	1328	32	32000	2530	Janela em cima! Janela em cima! Cuidado!
+0	1360	32	32000	2510	Atirem nas partes superiores!
+0	1392	32	32000	3190	Cessar fogo! Cessar fogo! Estão tentando nos flanquear!
+0	1424	32	32000	2570	Vão para o flanco, eles estão nos contornando!
+0	1456	32	32000	2650	Abram fogo no flanco! Estão nos contornando!
+0	1488	32	32000	3190	Contornem! Contornem! Estão tentando nos flanquear!
+0	1520	32	32000	3050	Alguém naquele flanco, estão tentando nos pegar por trás!
+0	1552	32	32000	2590	Estão avançando pela frente, saiam daí!
+0	1584	16	32000	1724	Vamos, porra!
+0	1600	32	32000	2670	VAMOS, VAMOS, VAMOS, PORRA!
+0	1632	16	32000	1630	MEXAM A BUNDA!
+0	1648	32	32000	2590	Mexam-se, mexam-se, mexam-se! Cuidado com o flanco!
+0	1680	16	32000	1290	Me cubram!
+0	1696	16	32000	1724	Me cubram, estou avançando!
+0	1712	32	32000	2430	Venham até aqui e me deem fogo de cobertura!
+0	1744	16	32000	1690	Movam-se! Me cubram!
+0	1760	32	32000	2410	Mantenham a cabeça baixa! Estou me movendo para o flanco!
+0	1792	16	32000	1510	Derrubem-nos!
+0	1808	32	32000	2490	Mandem bala nos inimigos!
+0	1840	16	32000	1110	ISSO AÍ!
+0	1856	32	32000	2610	Não posso esperar aqui! Estou saindo!
+0	1888	80	32000	7830	Hammerhead 6:2, aqui é 2:5, estamos cercados! Tenho várias baixas! Solicito evacuação médica prioritária na minha posição!
+0	1968	80	32000	8050	Aqui é 2:5, repito, estamos cercados, estamos cercados! Tenho várias baixas! Solicito evacuação médica prioritária na minha posição!
+0	2048	128	32000	13110	Hammerhead 6:2, aqui é Alpha 2:9, temos visual em 2:5. A zona-alvo está sob fogo pesado, múltiplos inimigos avançando da posição do 5:1. Solicito apoio de canhoneira AC-130.
+0	2176	64	32000	5530	Hammerhead 6:2, Hammerhead 6:2. Temos forças adicionais desconhecidas no terreno.
+0	2240	16	32000	1410	Copiado.
+0	2256	48	32000	5172	5:1, 5:1, aqui é 3:1. Estou do outro lado do quarteirão. Estou indo até você agora. Câmbio.
+0	2304	96	32000	9130	Hammerhead 6:2, aqui é 3:1. Estamos encontrando resistência pesada. Os inimigos posicionaram lançadores de RPG nos prédios ao redor, tentando assegurar a área.
+0	2400	32	32000	2150	Copiado, 6:2.
+0	2432	48	32000	3930	3:1, cuidado com a quina! RPGs a caminho!
+0	2480	48	32000	5172	Aqui é Anvil 7:1. Pacote inserido por corda. Estamos em padrão de espera. Câmbio.
+0	2528	32	32000	2570	Copiado, em posição.
+0	2560	80	32000	8070	Aqui é 7:1. Forças inimigas estão se reagrupando e seguindo para o museu. Solicito permissão para engajar os alvos.
+0	2640	64	32000	5570	Aqui é Charlie 2:0. Invadimos o museu. Muitos inimigos aqui dentro. Precisamos de instruções.
+0	2704	32	32000	2550	Copiado, 2:0, mantendo posição.
+0	2736	80	32000	8550	Hammerhead 6:2, aqui é Echo 5:1. O pacote escapou da rede. Repito, o pacote escapou da rede. Algum helicóptero tem visual? Câmbio.
+0	2816	32	32000	2250	Copiado, 6:2.
+0	2848	96	32000	9130	5:1, 5:1, aqui é Hammerhead 6:2. O rastreamento informa ruas barricadas ao norte. Estamos circulando vocês para encontrar uma rota alternativa, câmbio.
+0	2944	64	32000	6290	Negativo, 2:9, a Força de Reação Rápida está a caminho para reforçar. Reagrupem na posição deles e façam o que puderem.
+0	3008	80	32000	8620	Copiado, 3:1. Todos os indicativos, estejam cientes: inimigos têm posições defensivas nas estruturas ao redor. RPGs confirmados.
+0	3088	64	32000	6896	Copiado, Anvil 7:1. Façam a cobertura para Echo 5:1. Estão se movendo para o ponto de encontro Z, câmbio.
+0	3152	32	32000	2910	Vou repetir: não copiamos, CARALHO.
+0	3184	48	32000	3930	Copiado. Voltando à rota. Tempo estimado de chegada: 5 minutos.
+0	3232	80	32000	8270	Negativo, 7:1, permaneçam em posição e façam a cobertura. As equipes Bravo e Charlie estão a caminho. Seremos capazes de neutralizar a ameaça.
+0	3312	64	32000	5470	2:0, mantenham a posição. Alpha 2:9 e 2:5 estão a caminho para ajudar, câmbio.
+0	3376	48	32000	4210	Copiado, 2:9, estamos iniciando o ataque agora, aguardem.
+0	3424	96	32000	9150	2:9, não engajem essas forças a menos que recebam fogo. O S-2 do Batalhão informa que os atiradores são equipes de ataque da coalizão. Copiaram?
+0	3520	32	32000	2090	Aguarde, 5:1.
+0	3552	80	32000	7850	5:1, é negativo. Não persigam o pacote. Mantenham a posição e protejam o local. Copiaram?
+0	3632	32	32000	2710	Estão avançando na bandeira, vão pra lá, PORRA!
+0	3664	16	32000	1724	Mire bem embaixo da bandeira!
+0	3680	32	32000	2830	Cubram aquela porra de flanco, não os deixem flanquear!
+0	3712	32	32000	2210	Atirador no alto!
+0	3744	32	32000	2410	Tem um RPG na elevação, eliminem-no!
+0	3776	32	32000	3050	Atenção! RPG em cima! RPG em cima!
+0	3808	32	32000	3448	MERDA! VAMOS SER MASSACRADOS! Derrubem o cara na elevação!
+0	3840	32	32000	2930	Procurem cobertura! Atirador em cima! Atirador em cima!
+0	3872	16	32000	1590	Estão avançando sobre a bandeira!
+0	3888	32	32000	3230	Estão avançando para a bandeira! Vão pra lá!
+0	3920	32	32000	2510	No flanco! No flanco!
+0	3952	16	32000	1724	Cubra aquela porra de janela!
+0	3968	32	32000	2570	Atirador na janela de cima! Alguém derrube ele!
+0	4000	32	32000	2970	Janela em cima! Janela em cima! Metam bala neles!
+0	4032	16	32000	1724	Vamos! Vamos! Avancem!
+0	4048	16	32000	1724	MEXAM A PORRA DA BUNDA!
+0	4064	32	32000	2310	VAMOS, VAMOS, VAMOS, PORRA!
+0	4096	16	32000	1150	Mantenham-se unidos!
+0	4112	16	32000	1590	Segurem! Me cubram!
+0	4128	16	32000	1670	Entrem em cobertura e atirem!
+0	4144	32	32000	2190	Me deem cobertura, PORRA!
+0	4176	32	32000	2030	Me dá cobertura! Vou tentar flanquear eles!
+0	4208	16	32000	1670	Atirem no alvo!
+0	4224	16	32000	1630	Me deem cobertura! Vou tentar flanquear eles!
+0	4240	32	32000	2630	Atirem de volta! Atirem de volta, PORRA!
+0	4272	32	32000	2590	Vocês manterão a posição, Bravo!
+1	0	16	32000	1724	Cai fora daqui! Mova-se!
+1	16	32	32000	3310	2:1, aqui é o 3, mensagem, câmbio.
+1	48	48	32000	5172	2:1, aqui é o 3, nada ouvido, prosseguindo até o topo, câmbio.
+1	96	64	32000	5990	Top Hat assegurado. Continuando até o bunker. Cerca de 20 minutos até o ponto de encontro, câmbio.
+1	160	32	32000	3448	No bunker agora, verificando o pátio, câmbio.
+1	192	32	32000	3370	2:1, aqui é o 3, na escuta?
+1	224	64	32000	6896	Bunker assegurado, resistência mínima. Prosseguindo para o ponto de encontro. Câmbio final.
+1	288	96	32000	9290	2:1, aqui é o 3, no ponto de encontro agora. Lokstad, câmbio. Se me copia, a Fase 2 está em andamento. Estou avançando. Câmbio final.
+1	384	32	32000	2590	Solicito fogo de cobertura!
+1	416	64	32000	5470	3, aqui é o 2:1, tenho visibilidade. Atenção, inimigo avançando em sua direção.
+1	480	80	32000	7590	Contato. Alvos vezes 7. Correção, vezes 10. Varram e limpem a área. Movam-se agora! Movam-se agora!
+1	560	48	32000	3810	Negativo, 3, não podemos comprometer nossa posição. 2:1 encerrando.
+1	608	96	32000	8990	2:1, 2:1, escuta? Câmbio. 2:1, me escuta? Câmbio. Se escutar, estou prosseguindo para o ponto de encontro. Encerrando.
+1	704	80	32000	7290	Aqui é Bravo 3. Teste de rádio, câmbio. Nada ouvido, encerrando.
+1	784	112	32000	11530	Aqui é o 3. Tenho forças pesadas defendendo o bunker, câmbio. Repito, tenho forças pesadas defendendo o bunker. Prosseguindo pelo objetivo, aviso em breve. Encerrando.
+1	896	48	32000	4090	Bravo 2:1, aqui é 3D. Escuta? Câmbio.
+1	944	112	32000	11770	Algum indicativo nesta rede? Aqui é Bravo 3. Escuta? Casa da fazenda, agora. Repito, casa da fazenda, agora. Ponto de encontro está vazio. Qual sua situação?
+1	1056	128	32000	12490	Continuando para o bunker. Cerca de 20 minutos até o ponto de encontro, câmbio. Repito, cerca de 20 minutos até o ponto de encontro. O bunker caiu, câmbio. Nada ouvido. Encerrando.
+1	1184	48	32000	5172	Aqui é Bravo 3. Teste de rádio, câmbio.
+1	1232	64	32000	6110	Bravo 3, alvos neutralizados.
+1	1296	32	32000	3010	Aqui é o 3. Estou eliminando alvos difíceis na área.
+1	1328	16	32000	1570	Estou cercado!
+1	1344	32	32000	2250	Contato! Contato! Mensagem, câmbio!
+1	1376	32	32000	2750	Ponto de encontro nas coordenadas 3:4. Tragam para cá.
+1	1408	32	32000	2190	Área limpa, avançando.
+1	1440	32	32000	2990	Inimigos neutralizados. Avançando para próxima área.
+1	1472	32	32000	2150	Mais inimigos chegando.
+1	1504	64	32000	6270	Aqui é o 2:1. Vocês estão em varredura e limpeza da área para inteligência. Entraremos em contato em 20 minutos. Encerrando.
+1	1568	80	32000	8570	Aqui é o 2:1. Temos contato visual com hostis em edifícios próximos. Limpem a área. Daremos suporte de nossa posição. Câmbio.
+1	1648	64	32000	6750	Bravo 3, aqui é o 2:1. Mantenha sua posição. Estamos a caminho para reunir na sua localização. Aguarde.
+3	0	32	32000	2270	Aqui é o 3, saindo.
+3	32	48	32000	3830	Copiado, 2:1, visual confirmado. Fumaça às 12 horas.
+3	80	16	32000	1724	Copiado, 4.
+3	96	32	32000	2970	Aqui é o 2:1, encontro na usina principal.
+3	128	32	32000	2810	Aqui é o 2:1, consegue ver fumaça ou chaminés?
+3	160	96	32000	9170	Você está fora de posição. Copia? Está fora de posição. Está chegando em um campo minado. Não há tempo para contornar. Avance atento aos fios de tropeço.
+3	256	32	32000	3448	Aqui é o 2:1. Inimigos por toda parte. Vou te cobrir.
+3	288	16	32000	1450	Inimigo na sua posição!
+3	304	16	32000	1610	Contato à direita!
+3	320	16	32000	1724	Estão tentando te flanquear pela esquerda!
+3	336	16	32000	1610	Em cima de você! Em cima!
+3	352	16	32000	1010	Na mira!
+3	368	32	32000	2750	Inimigo abrigado, tenho ângulo, atirando!
+3	400	80	32000	7850	Aqui é o 2:1. Sem linha de visão clara. Repito: Sem linha de visão clara. Não posso cobrir seu avanço. Câmbio.
+3	480	16	32000	1530	Perdendo o visual.
+3	496	32	32000	2170	Visual retomado. No aguardo.
+3	528	64	32000	5770	4, aqui é o 2:1, qual é o alvo? Estamos atrasados. Exploda o equipamento e saia daí agora. Desligo.
+3	592	80	32000	7450	Copiado. 3, aqui é o 4. Vá para a sala de máquinas principal, destrua o equipamento menor e detone a sala por dentro. Câmbio.
+3	672	48	32000	3850	Faltam 3, aproxime-se e acabe com os painéis de controle.
+3	720	32	32000	2350	Vou detonar! No aguardo.
+3	752	32	32000	3310	Todos os indicativos, preparar, preparar, preparar!
+3	784	16	32000	910	Copiado.
+3	800	16	32000	1470	Entendido.
+3	816	48	32000	5172	Aqui é o 3. Eliminando alvos prioritários na área. Informo se necessário. Desligo.
+3	864	48	32000	5172	Bravo 3, alvos neutralizados. Saindo do prédio. Cesse o fogo.
+3	912	48	32000	3710	Bravo 3, detone as minas com sua arma antes de avançar.
+3	960	64	32000	5950	Aqui é o 2:1. Inimigos avançando na sua posição. Vou dar cobertura de sniper no seu avanço.
+3	1024	80	32000	8390	Bravo 3, infiltre na estrutura e destrua alvos de oportunidade. Bravo 4 vai limpar o perímetro, copia?
+3	1104	32	32000	2510	Bravo 4, relatório de situação, câmbio.
+3	1136	32	32000	3448	Copiado. 3, qual a sua situação?
+3	1168	16	32000	910	Cobrindo!
+3	1184	32	32000	2870	Elimine o atirador atrás daquela cobertura!
+3	1216	32	32000	3448	Negativo, 3, não podemos comprometer nossa posição.
+3	1248	16	32000	1310	Você conseguiu!
+3	1264	32	32000	3448	No aguardo. Tenho vários inimigos se movendo pelo perímetro.
+3	1296	48	32000	4450	Resistência pesada. Vou flanquear por fora da área de combustível. Câmbio.
+3	1344	32	32000	3250	Alvo 1 preparado. Seguindo para o Alvo 2.
+3	1376	32	32000	3250	Alvos 1 e 2 prontos para detonação. No aguardo.
+3	1408	32	32000	2810	Observador, informe! Inimigos em movimento!
+3	1440	32	32000	2690	Segurança à frente! Estamos chegando perto!
+3	1472	16	32000	950	Movendo!
+3	1488	32	32000	2010	Vários inimigos se aproximando.
+3	1520	16	32000	1170	Sob fogo!
+3	1536	32	32000	2110	Ouvi algo chegando.
+3	1568	16	32000	1630	Avançar! Me cobre!
+3	1584	16	32000	1724	ESTÁ ATIRANDO EM MIM! FOGO!
+3	1600	32	32000	2170	Me dê fogo de cobertura!
+3	1632	32	32000	2570	Vem aqui e me dá fogo de cobertura!
+3	1664	16	32000	1390	Derruba ele!
+3	1680	32	32000	2190	Fogo naquele alvo!
+3	1712	32	32000	2310	Lá vem abaixa!
+3	1744	16	32000	1724	Eles têm um RPG!
+3	1760	48	32000	4290	Fogo pesado de RPG. Os tiros vêm de cima.
+3	1808	16	32000	1490	Estou encurralado!
+3	1824	48	32000	4130	Área segura, avançando para o próximo nível, câmbio.
+3	1872	32	32000	2410	Fogo naquela janela!
+3	1904	32	32000	2590	Estão por toda parte! Preciso de apoio!
+3	1936	32	32000	3190	Zona segura. Seguindo para a próxima área.
+3	1968	32	32000	2550	CUIDADO! TIRO VINDO!
+3	2000	16	32000	1530	Eu vou!
+3	2016	16	32000	1470	Inimigo abatido!
+3	2032	16	32000	1724	Tô ficando sem munição!
+4	0	32	32000	3370	Mantenha sua posição! Não recue, porra!
+4	32	16	32000	1724	Avançando.
+4	48	32	32000	3350	Fiquem alertas, escolham seus alvos. Rajadas curtas e controladas.
+4	80	16	32000	970	Tô contigo!
+4	96	16	32000	1724	Alvo limpo, estou na frente.
+4	112	16	32000	1510	Abrigar e atirar!
+4	128	32	32000	2970	...na entrada. Eu assumo a ponta.
+4	160	32	32000	2190	Negativo, mantenha sua posição!
+4	192	48	32000	5172	As ordens são para manter! Não entre nesse prédio! Keller!
+4	240	16	32000	1430	Copiado.
+4	256	48	32000	4610	Primeiro nível limpo. Seguindo para a próxima área. Aguarde atualizações. Câmbio.
+4	304	32	32000	2850	McCarver, você ainda está aí?
+4	336	48	32000	5172	Avancei pela maior parte da estrutura. Informo assim que o pacote estiver seguro. Desligo.
+4	384	48	32000	3810	McCarver, estou saindo. Cesse o fogo.
+4	432	32	32000	2970	Cuidado com o seu espaço, não quero ser pego nessa merda toda.
+4	464	32	32000	2710	Copiado. Não vamos ser pegos dormindo.
+4	496	48	32000	5172	4, pegue o flanco direito, eu pego o esquerdo. 3, assalte o ninho de metralhadora, copia?
+4	544	112	32000	11590	Bom trabalho, 3. Proteja o local. Não deixe nada entrar ou sair. 3, você copia? Eu disse para manter posição. Droga, 3, mantenha a posição!
+4	656	32	32000	2610	Bravo 3, relatório de situação, câmbio.
+4	688	48	32000	4250	Keller, o que quer que esteja fazendo, faça rápido. Reforços inimigos vindo pra cá.
+4	736	96	32000	8910	Aqui é McCarver. Vários inimigos tentando entrar no prédio. Vamos tentar segurá-los, mas estamos sob fogo pesado. Copia?
+4	832	48	32000	4690	Entendido. Estabelecemos um perímetro defensivo ao redor do prédio. Câmbio.
+4	880	32	32000	2690	Entendido, 2:1. Movendo para verificar.
+4	912	112	32000	10610	2:1, aguarde. Acho que tenho algo. Más notícias. Rastros por toda parte. Recentes. Talvez um pelotão grande e numeroso.
+4	1024	16	32000	1650	Sinal forte e claro, copiado.
+4	1040	32	32000	2710	Isso tem que valer a pena, Keller.
+4	1072	32	32000	2490	Vamos, anda logo com essa porra!
+4	1104	32	32000	2310	Avançar para o contato, câmbio.
+4	1136	32	32000	3030	Fiquem aí embaixo, acho que temos movimento mais à frente.
+4	1168	32	32000	2070	Alguém vá para aquele flanco!
+4	1200	32	32000	3448	Droga, alguém acabe com aquele RPG!
+4	1232	32	32000	2850	Passarela acima! Passarela acima!
+4	1264	32	32000	2490	Ele está acima de você, acima de você!
+4	1296	32	32000	2090	Atirador acima! Atirador acima!
+4	1328	32	32000	3110	Na janela, na janela, RPG!
+4	1360	32	32000	2830	RPG, cubra aquela maldita janela!
+4	1392	32	32000	2070	Sai daí, corre!
+4	1424	32	32000	1990	Solta isso, solta isso!
+4	1456	16	32000	1724	De onde eles vêm?
+4	1472	16	32000	1724	Recuem para se proteger!
+4	1488	32	32000	2730	Estou à sua esquerda! À sua esquerda!
+4	1520	32	32000	2270	De onde diabos veio isso?
+4	1552	16	32000	1724	Atirador abatido!
+4	1568	32	32000	3010	Abaixem essas cabeças, estou abrindo fogo!
+4	1600	32	32000	3130	REVIDE O FOGO! REVIDE O FOGO, PORRA!
+4	1632	32	32000	3170	Keller! Elimine o atirador atrás daquela cobertura!
+4	1664	32	32000	2090	Ah, droga, fui atingida!
+4	1696	32	32000	2350	Atrás do caminhão! Alguém o pegue!
+4	1728	32	32000	2150	Saiam daí! Andem logo!
+4	1760	16	32000	1430	Neutralizem a cobertura!
+4	1776	16	32000	1050	Mexa-se!
+4	1792	16	32000	1090	Entendido.
+4	1808	16	32000	1010	Deixa comigo.
+4	1824	16	32000	1724	Atenção, ele está na passarela!
+4	1840	16	32000	950	Entendido.
+4	1856	16	32000	1010	Copiado.
+4	1872	32	32000	2870	Negativo, estou preso, preciso de cobertura agora!
+4	1904	32	32000	2370	Negativo, não tenho ângulo para o tiro.
+4	1936	32	32000	2210	Copiado, estou com ele na mira.
+4	1968	16	32000	1724	Pare com isso! Pare com isso!
+4	1984	16	32000	1250	Estou sem munição.
+4	2000	16	32000	1350	Trocando carregador!
+4	2016	16	32000	1724	Poupe sua munição!
+4	2032	32	32000	2130	Me cubra! Vou tentar flanquear eles!
+4	2064	32	32000	2890	Temos uma metralhadora, eliminem!
+4	2096	16	32000	1630	Eliminem aquela arma!
+5	0	32	32000	2650	Contato! Tenho contato!
+5	32	48	32000	4550	Fiquem atentos. Relatórios indicam franco-atiradores na área.
+5	80	32	32000	2830	Aguardem. Patrulha inimiga à frente.
+5	112	80	32000	7470	Droga! Protejam-se! Protejam-se! Atirador na sua posição! Use o terreno! Fique fora da estrada!
+5	192	32	32000	3390	O atirador sabe o que está fazendo. Mantenha a cabeça baixa.
+5	224	64	32000	5550	Contato! Alvo no prédio a 100 metros à frente, às 2 horas!
+5	288	32	32000	2630	Limpar a estrutura, câmbio.
+5	320	64	32000	5990	3, aqui é o 2:1. Proteja essa arma. Podemos precisar da distância de combate.
+5	384	48	32000	4190	6, espere pelo meu comando.
+5	432	32	32000	1930	Acabe com eles!
+5	464	32	32000	3130	Alvo abatido na minha posição.
+5	496	64	32000	6750	Atirador na torre à minha frente. Não atravesse campo aberto. Eu cubro. Mova-se agora!
+5	560	32	32000	2250	Vários atiradores!
+5	592	64	32000	5930	Aqui é o 2:1. Inimigos avançando. Às 12 horas. Escolham seus alvos. Fogo livre.
+5	656	32	32000	2890	Cuidado à sua direita. Vários alvos.
+5	688	80	32000	6790	Cessar fogo! Cessar fogo! Terreno limpo! Avançar! Relatórios indicam um sistema de túneis no porão.
+5	768	48	32000	4890	Esta área é um ninho de franco-atiradores. Não deixe que te peguem.
+5	816	64	32000	5730	Utilize as trincheiras para cobertura. Não revele sua posição a menos que tenha um tiro limpo.
+5	880	16	32000	1510	Cuidado!
+5	896	48	32000	4250	Contato! Inimigos avançando! No seu tempo! Fogo!
+5	944	32	32000	2090	Protejam-se!
+5	976	48	32000	4430	Estamos nos aproximando. Teremos acesso à siderúrgica pela rede à frente.
+5	1024	32	32000	2550	Sniper! À sua esquerda!
+5	1056	32	32000	2070	Tem outro à sua direita!
+5	1088	48	32000	3950	É aquele prédio que queremos. Vasculhem e limpem a área.
+5	1136	80	32000	8110	Área segura. Vamos em frente. A rede de túneis leva até a siderúrgica. Vou me reunir com vocês lá. Não se percam.
+5	1216	48	32000	3950	É, bom… de qualquer jeito não gosto disso.
+5	1264	32	32000	3130	Vejo que você é bem sociável.
+5	1296	48	32000	3990	Vou lembrar disso. Há quanto tempo você está na tumba?
+5	1344	16	32000	1724	Entendido.
+5	1360	48	32000	5172	Tenente, está vendo isso? Vários alvos avançando sobre nossa posição.
+5	1408	16	32000	1310	Entendido!
+5	1424	32	32000	2490	Tem mais inimigos chegando!
+5	1456	48	32000	4170	Veja só. Eu achava que lugares desses só existiam no cinema.
+5	1504	64	32000	6470	Tá brincando? Esse é o meu tipo de lugar. Cheio das pessoas que eu gosto. Quieto e fora do caminho.
+5	1568	32	32000	2830	Você não chega onde eu cheguei sendo um coração mole.
+5	1600	32	32000	2830	Tempo suficiente para esquecer o que é certo e errado.
+5	1632	16	32000	1390	Leve-o para fora.
+5	1648	32	32000	2370	Remova as lápides, Keller.
+5	1680	32	32000	2290	Cubra seu arco, eu cuido do outro lado.
+5	1712	16	32000	1550	Avançando!
+5	1728	32	32000	2150	Mantenham a calma, fomos descobertos!
+5	1760	16	32000	1724	Movam-se para uma cobertura melhor!
+5	1776	32	32000	2070	Fogo de cobertura, agora!
+5	1808	32	32000	2010	Inimigo avistado, preparados!
+5	1840	16	32000	1724	Me cubram, estou avançando!
+5	1856	16	32000	1290	Fogo!
+5	1872	16	32000	1450	Eliminem ele!
+5	1888	16	32000	1490	Detonem eles!
+5	1904	32	32000	2790	Revidem! Revidem! Droga!
+5	1936	48	32000	3830	Preparem-se para reagrupamento. Vamos avançar até o ponto de encontro do outro lado.
+5	1984	32	32000	2690	Contornem, eles estão tentando nos flanquear!
+5	2016	16	32000	1724	Vamos, porra!
+5	2032	32	32000	2470	Múltiplos inimigos se aproximando!
+5	2064	32	32000	2510	Abaixem as cabeças, estou flanqueando!
+5	2096	32	32000	2610	Eles estão avançando pelo flanco! Saiam daí!
+5	2128	16	32000	1724	Recebendo fogo pesado!
+5	2144	32	32000	2210	Merda, eles estão por toda parte!
+5	2176	16	32000	1610	Estamos cercados!
+5	2192	48	32000	3890	Múltiplos atiradores no ponto! Estou sob fogo! Estou sob fogo!
+5	2240	16	32000	1724	Recuem! Recuem!
+5	2256	32	32000	2570	À frente, me deem fogo de apoio!
+5	2288	32	32000	2210	Eles estão por toda parte! Preciso de apoio!
+5	2320	16	32000	1470	Destruam aquela arma!
+5	2336	32	32000	3030	Uma metralhadora à frente! Acabem com ela!
+5	2368	32	32000	2010	Acabem com aquela metralhadora!
+5	2400	32	32000	3150	Keller, elimine o atirador atrás daquela cobertura!
+5	2432	16	32000	1590	Alvo abatido.
+5	2448	48	32000	4330	Temos fogo pesado vindo daquela parte alta. Keller, você consegue pegá-lo?
+5	2496	16	32000	1510	Peguei ele!
+5	2512	16	32000	1450	Inimigo abatido.
+5	2528	32	32000	2030	Mande uma granada naquela posição!
+5	2560	16	32000	1590	Alvo neutralizado!
+5	2576	32	32000	2290	Saia daí! Mova-se!
+5	2608	32	32000	2330	Cubra meu flanco! Estou avançando!
+5	2640	32	32000	2010	Tô ficando sem munição!
+5	2672	48	32000	3770	Merda! Eles têm reforços! Granadas neles!
+5	2720	32	32000	2210	Eu tenho que parar isso! Me cubra!
+6	0	32	32000	2730	Cesse fogo na bandeira.
+6	32	32	32000	2350	Copiado, Alpha.
+6	64	32	32000	2570	Alpha Argo, movendo agora.
+6	96	16	32000	1570	Na direita! Na direita!
+6	112	16	32000	1724	Eles acharam nossa posição!
+6	128	16	32000	1724	Fui atingido, fui atingido!
+6	144	16	32000	1724	Abortar! Abortar!
+6	160	32	32000	3410	Equipe Bravo! Na escuta! Aqui é...
+6	192	16	32000	1724	Você viu isso?
+6	208	32	32000	3310	Soldado abatido! Soldado abatido!
+6	240	32	32000	2090	São muitos deles!
+6	272	16	32000	1490	Precisamos de apoio!
+6	288	32	32000	3070	O subcomandante caiu! Caia fora daqui agora!
+6	320	32	32000	2170	Alpha movendo agora.
+6	352	16	32000	1724	Alpha movendo para a posição.
+6	368	16	32000	1724	Eles nos pegaram no ponto de infiltração!
+6	384	32	32000	3448	Cuidado com o fogo cruzado! Olhe! Olhe!
+6	416	32	32000	2330	Recuar! Recuar!
+6	448	48	32000	3830	Equipe Bravo, sob fogo pesado! Estamos sofrendo baixas!
+6	496	32	32000	2010	VAMOS, VAMOS, VAMOS!
+6	528	32	32000	2090	Todas as equipes, silenciem as armas.
+6	560	32	32000	2310	Múltiplos alvos à frente e atrás!
+6	592	32	32000	2010	Cuidem dos setores! Cuidem dos setores!
+6	624	16	32000	910	Cuidado!
+6	640	16	32000	1470	Entendido.
+6	656	48	32000	4850	Aqui é Bravo varrendo os contêineres. Sem contato.
+6	704	16	32000	1490	Alvo abatido.
+6	720	16	32000	1450	Inimigo à vista!
+6	736	16	32000	1410	Emboscada!
+6	752	16	32000	1724	Confere! Confere! Confere!
+6	768	16	32000	1570	Entrando!
+6	784	48	32000	4590	Recebendo fogo pesado de RPG! Tiros vindo de cima!
+6	832	48	32000	4610	Alguém me dê cobertura de fogo! Tenho um RPG acima de mim!
+6	880	32	32000	3448	Alvo abatido! Alvo abatido!
+6	912	16	32000	1610	Inimigo abatido.
+6	928	32	32000	2250	Aguentem firme e cubram o ponto.
+6	960	32	32000	3110	Droga, vão pra lá!
+6	992	32	32000	2770	Então você tá nessa? Me dê cobertura aqui.
+6	1024	32	32000	2410	Múltiplos inimigos se aproximando.
+6	1056	48	32000	4310	Vários atiradores no ponto! Estou preso! Estou preso!
+6	1104	32	32000	2170	Estou no flanco! Estou no flanco!
+6	1136	16	32000	1724	Ele está avançando pelo flanco!
+6	1152	32	32000	2990	Inimigos tentando flanquear! Ajustem o fogo!
+6	1184	32	32000	3150	Alguém cubra aquele flanco, estão tentando nos cercar por trás!
+6	1216	32	32000	2670	Venham até aqui e me deem cobertura de fogo!
+6	1248	16	32000	1724	Avancem! Me cubram!
+6	1264	32	32000	2450	Vamos, equipe Bravo. Avancem.
+6	1296	16	32000	1370	Vai, vai, vai!
+6	1312	32	32000	2930	Avancem por aquela área! Vamos, Bravo 3!
+6	1344	32	32000	2750	Droga! Arma travou! Arma travou!
+6	1376	16	32000	1724	Entendido, me dê cobertura!
+6	1392	16	32000	1724	Estou ficando sem munição!
+6	1408	32	32000	2470	Abaixem-se! Abaixem-se! Granada!
+6	1440	32	32000	3330	Deus! Fui atingido! Fui atingido! Preciso de cobertura de fogo!
+6	1472	32	32000	1990	Ah, merda! Vem aqui!
+6	1504	32	32000	2850	Keller! Elimine o atirador atrás daquela cobertura!
+6	1536	16	32000	950	Avançar!
+6	1552	16	32000	1090	Avistado!
+6	1568	32	32000	3448	Estão se movendo pelo flanco! Vá pra lá agora, porra!
+6	1600	16	32000	1724	Me dê cobertura e atire!
+6	1616	32	32000	2010	Explodam eles! Explodam eles!
+6	1648	16	32000	1610	Em cima de você! Em cima!
+6	1664	16	32000	1724	Saia daí, agora!
+6	1680	32	32000	2510	Keller, vou tirá-los da toca. No aguardo.
+7	0	16	32000	1724	Eles estão usando escudos!
+7	16	32	32000	2010	Estou entrando.
+7	48	32	32000	2210	Mantenham-se juntos. Cuidado com as quinas.
+7	80	16	32000	830	Cuidado.
+7	96	16	32000	1724	Alvo, às 12 horas.
+7	112	16	32000	1250	RPG!
+7	128	32	32000	2030	Concentrem fogo na entrada!
+7	160	32	32000	2510	Fechem a formação. Cuidado com as brechas.
+7	192	32	32000	1990	Franco-atirador em cima de você!
+7	224	16	32000	1470	Lá vem!
+7	240	32	32000	2090	Ali está a entrada, logo à frente!
+7	272	16	32000	1724	Lá vai fogo!
+7	288	64	32000	6350	Temos que chegar ao outro lado da ponte. Preparem-se para avançar. Derrubem tudo que se mover.
+7	352	48	32000	5172	Pedindo com educação: como porra você acha? Agora se preparem para avançar.
+7	400	48	32000	3790	Eles terão franco-atiradores na superestrutura, então garantam nossa cobertura por cima.
+7	448	32	32000	2750	Reorganizar do outro lado.
+7	480	16	32000	1510	Vocês viram aquilo?
+7	496	32	32000	2170	Mira na cabeça. Eles estão de colete.
+7	528	48	32000	4090	Cessar fogo. Cessar fogo. Área segura.
+7	576	80	32000	7710	Não quero estragar a porra do seu plano, mas como caralho você planeja passar por todos esses desgraçados?
+7	656	32	32000	2430	Vejo vocês, desgraçados, do outro lado.
+7	688	32	32000	2450	Campo minado do caralho!
+7	720	16	32000	1724	Inimigos se aproximando!
+7	736	32	32000	2370	RPG, continuem se movendo!
+7	768	16	32000	1530	Mova ele!
+7	784	32	32000	2970	Fogo! Fogo! Puta que pariu!
+7	816	32	32000	2310	Movendo! Me cubra!
+7	848	32	32000	2870	Saia daí, eles vão te despedaçar!
+7	880	32	32000	2970	Me cubra! Vou eliminar o RPG lá em cima!
+7	912	32	32000	2690	Vão, vão, vão! Puta que pariu!
+7	944	32	32000	2370	De onde caralho veio isso?
+7	976	32	32000	3190	Retribuam o fogo! Retribuam o fogo, porra!
+7	1008	48	32000	4150	Muito bem, vamos nos aproximar e fechar a formação. Cubra o seu lado.
+7	1056	32	32000	2870	Vamos, vamos!
+7	1088	32	32000	2330	Inimigo abatido!
+7	1120	32	32000	2690	Alvo derrubado! Alvo abatido!
+7	1152	48	32000	3750	Espalhem-se e fiquem em fila dispersa. Não queremos ser pegos de surpresa.
+7	1200	32	32000	2650	Vá para o flanco! Eles estão contornando!
+7	1232	32	32000	2890	Eles têm um RPG!
+7	1264	32	32000	2850	Agora mexa a porra da sua bunda!
+7	1296	32	32000	2570	Atirem naquele alvo!
+7	1328	32	32000	2890	Mantenha o fogo de cobertura!
+7	1360	32	32000	3448	Você vai ser despedaçado! Derrube o cara no terreno alto!
+7	1392	32	32000	3250	Tem um RPG na janela, alguém derrube ele!
+7	1424	32	32000	2450	Saia logo daí, porra!
+7	1456	32	32000	2330	Saia daí!
+7	1488	32	32000	2070	Mantenham-se juntos!
+7	1520	32	32000	2310	Fiquem firmes, fomos descobertos!
+7	1552	32	32000	3270	Proteja-se!
+7	1584	32	32000	2970	Procurem cobertura, temos movimentação à frente.
+7	1616	32	32000	2590	Lá vem fogo!
+7	1648	32	32000	2210	Mantenha sua posição.
+7	1680	32	32000	2130	Eles têm escudos táticos.
+7	1712	32	32000	3030	Mira na cabeça, eles estão de colete.
+7	1744	16	32000	1390	Derrubem ele!
+7	1760	16	32000	1270	Alvo abatido!
+7	1776	32	32000	2090	Todas as unidades, silenciadores ativados.
+7	1808	32	32000	2710	Eles estão usando máscaras! Mira na cabeça!
+7	1840	16	32000	1570	Copiado, avançando!
+7	1856	32	32000	3448	FOGO NELES! FOGO NELES! MOVAM-SE! MOVAM-SE! MOVAM-SE!
+7	1888	32	32000	2490	Atraia o fogo deles, eu os pego quando se moverem.
+7	1920	16	32000	1670	Elimine aquela metralhadora!
+7	1936	16	32000	1590	Inimigo abatido!
+7	1952	32	32000	3090	Eles têm uma metralhadora! Protejam-se!
+7	1984	48	32000	3770	Ei, todas as unidades aguardem! Keller, limpe o ponto!
+7	2032	32	32000	3448	Saia daí!
+7	2064	32	32000	3410	Mantenha sua posição! Não recue, porra!
+7	2096	32	32000	2330	Ei, consiga um visual daquela posição!
+7	2128	32	32000	2990	Protejam-se! De onde caralho veio isso?
+7	2160	32	32000	2170	Então nós vamos flanquear!
+7	2192	16	32000	1250	Peguei ele!
+7	2208	16	32000	1610	Derrubem ele!
+7	2224	16	32000	1390	Alvo abatido!
+7	2240	32	32000	2090	Cubra meu flanco, estou avançando!
+7	2272	32	32000	3030	Saia daí, Keller! Eles vão te despedaçar!
+7	2304	32	32000	2090	Saia da porra do canto!
+7	2336	32	32000	2390	Temos que eliminá-los!
+7	2368	32	32000	2030	Avançar para contato, câmbio!
+7	2400	48	32000	4410	Ei, alguém para reorganizar! Vamos passar para o ponto de encontro do outro lado!
+7	2448	32	32000	3050	Preciso de apoio!
+7	2480	32	32000	3350	Me deem fogo de apoio daquele centro!
+7	2512	48	32000	3830	Olhos atentos! Mova-se! Mova-se! Mova-se! Preciso de suporte!
+7	2560	32	32000	3350	Puta merda, Keller! sobe aí!
+7	2592	32	32000	2410	No flanco! No flanco!
+7	2624	32	32000	2930	Recue para cobertura! Mova agora!
+7	2656	16	32000	1430	Mexam a bunda!
+7	2672	32	32000	2890	OBSERVADOR, INFORME! INIMIGOS EM MOVIMENTO!
+7	2704	32	32000	2370	Estou encurralado! Atirador acima de nós!
+8	0	32	32000	3230	Copiado. Fazendo varredura nas ruínas.
+8	32	48	32000	4250	Achei uma entrada de bunker. Entrando. No aguardo.
+8	80	112	32000	11810	Avançando abaixo do solo. O rádio está falhando e a recepção está ruim. Atualizo conforme necessário. Câmbio. Copiou minha última? Câmbio. Sem resposta. Desligo.
+8	192	64	32000	5990	Aqui é o 3. Encontrei um bunker de grande porte aqui. Estou limpando a área. Copia? Câmbio.
+8	256	32	32000	3270	Resistência pesada, enfrentando alvos, câmbio.
+8	288	80	32000	7530	Encontrei uma rampa descendo mais. Seguindo para a subestrutura. Na escuta? Câmbio. Sem resposta. 3 desligando.
+8	368	80	32000	7430	Aqui é o 3. Aqui é o 3. O pacote pode estar no local. Repito, o pacote pode estar no local. Estou avançando para contato. No aguardo.
+8	448	64	32000	6490	Aqui é o Bravo 3, alvo abatido. Repito, alvo abatido, saindo da estrutura.
+8	512	80	32000	7790	Não vamos deixar esse desgraçado escapar de novo. 3, as honras são suas. Vamos garantir o perímetro caso o merdinha tente correr.
+8	592	48	32000	3870	Vá para a porra da sua posição! Você sabe o que fazer, Keller.
+8	640	32	32000	2850	Estou começando a achar que você não gosta de mim.
+8	672	64	32000	6896	Bravo 3, acabei de ver um bando de inimigos passarem pela minha posição em direção ao pátio. Alguns escaparam, você deve vê-los em qualquer segundo.
+0	9248	336	33169	17464	Hammerhead 6:2, aqui é Alpha 2. Vocês têm contato visual com o 2:5? Hammerhead 6:2, aqui é 2:5. Estamos encurralados sob fogo. Tenho múltiplas baixas. Solicito evacuação médica prioritária na minha localização. 5:1, 5:1, aqui é 3:1. Estou do outro lado do quarteirão. Estou indo até vocês agora. Câmbio.

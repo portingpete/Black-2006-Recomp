@@ -32,7 +32,7 @@ TEST_CASE("Tuning multipliers validate and preserve original defaults through JS
             wanted.*field = choice;
             CHECK(settingsFromJson(settingsJson(wanted)).*field == choice);
             Settings read;
-            CHECK(applyVideoIni(read, videoIni(wanted)) == 28);
+            CHECK(applyVideoIni(read, videoIni(wanted)) == 30);
             CHECK(read.*field == choice);
         }
     };

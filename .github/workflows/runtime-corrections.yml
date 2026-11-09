@@ -45,6 +45,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'APU mixdown regression failed' }
       - name: Test generated-source audit and indirect-call feedback
         run: python scripts/test_generate.py
+      - name: Build and run audio settings regressions
+        shell: pwsh
+        run: |
+          cmake -S tests/audio_settings -B build-audio-settings -G "Visual Studio 17 2022" -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'Audio settings configure failed' }
+          cmake --build build-audio-settings --config Release
+          if ($LASTEXITCODE -ne 0) { throw 'Audio settings build failed' }
+          ctest --test-dir build-audio-settings -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'Audio settings regression failed' }
       - name: Build and run LOD and combat tuning regressions
         shell: pwsh
         run: |

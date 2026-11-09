@@ -485,5 +485,13 @@
   "AIM MODE": "MODO DE APUNTADO",
   "TOGGLE": "ALTERNAR",
   "HOLD": "MANTENER",
-  "Toggle keeps the original aim behavior. Hold aims only while the aim button is held.": "Alternar conserva el apuntado original. Mantener apunta solo mientras se mantiene pulsado el botón de apuntar."
+  "Toggle keeps the original aim behavior. Hold aims only while the aim button is held.": "Alternar conserva el apuntado original. Mantener apunta solo mientras se mantiene pulsado el botón de apuntar.",
+  "SUBTITLES": "SUBTÍTULOS",
+  "Show subtitles for dialogue and cutscenes. Applies the next time you start the game.": "Mostrar subtítulos en los diálogos y las cinemáticas. Se aplica la próxima vez que inicies el juego.",
+  "PRECOMPILE SHADERS AT STARTUP": "PRECOMPILAR SHADERS AL INICIAR",
+  "Applies next time you start the game. On prepares recorded shaders before playing. Off skips that preparation; shaders needed during play are still compiled.": "Se aplica la próxima vez que inicies el juego. Activado prepara los shaders grabados antes de jugar. Desactivado omite esa preparación; los shaders necesarios durante la partida se siguen compilando.",
+  "SPRINT": "ESPRINTAR",
+  "Hold the Sprint key while moving to run faster. Default: Left Shift. Off keeps original movement.": "Mantén pulsada la tecla Esprintar mientras te mueves para correr más rápido. Por defecto: Shift izquierdo. Desactivado conserva el movimiento original.",
+  "JUMP": "SALTAR",
+  "Press the Jump key on the ground to jump. Default: Space. Release before jumping again.": "Pulsa la tecla Saltar en el suelo para saltar. Por defecto: Espacio. Suéltala antes de volver a saltar."
 }

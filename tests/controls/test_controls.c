@@ -13,6 +13,11 @@
 #include <string.h>
 #include <windows.h>
 
+/* Captions are unrelated to controls/menu tests; the game keeps its production caption object. */
+int pc_subtitles_enabled(void) { return 0; }
+int pc_speech_subtitle(uint16_t *out, unsigned capacity, int paused)
+{ (void)paused; if (out && capacity) out[0] = 0; return 0; }
+
 static int g_fail, g_pass;
 #define CHECK(c) do { if (c) g_pass++; else { g_fail++; printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); } } while (0)
 
