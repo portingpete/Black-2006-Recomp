@@ -29,6 +29,7 @@ target_link_libraries(movie-input-test PRIVATE user32)
 # page or controls profile load is requested.
 add_executable(movie-overlay-test test_overlay.c
     "${XBOXRECOMP_DIR}/src/video/pc_menu.c"
+    "${XBOXRECOMP_DIR}/src/video/pc_speech_subtitle.c"
     "${XBOXRECOMP_DIR}/src/video/pc_photo.c"
     "${XBOXRECOMP_DIR}/src/video/pc_movie_skip.c"
     "${XBOXRECOMP_DIR}/src/input/pc_input.c"

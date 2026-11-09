@@ -68,6 +68,8 @@ TEST_CASE("Under Wine the game's paths are on drive Z:") {
 #endif
     CHECK(env.at("RECOMP_CONTROLS_INI").starts_with("Z:"));
     CHECK(env.at("RECOMP_CONTROLS_INI").find('/') == std::string::npos);
+    CHECK(env.at("RECOMP_AUDIO_INI").starts_with("Z:"));
+    CHECK(env.at("RECOMP_AUDIO_INI").ends_with("\\local\\audio.ini"));
 }
 
 TEST_CASE("Playing needs the build and the disc") {

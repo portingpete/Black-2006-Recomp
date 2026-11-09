@@ -244,6 +244,8 @@ std::string videoIni(const Settings& s) {
     line("enemy_health", std::to_string(s.enemy_health));
     line("headshot_instakill", s.headshot_instakill);
     line("aim_mode", s.aimMode);
+    line("sprint", s.sprint);
+    line("jump", s.jump);
     return text;
 }
 
@@ -338,6 +340,10 @@ int applyVideoIni(Settings& s, std::string_view text) {
             pick(choices::kOnOff, s.hitmarkers);
         } else if (key == "optional_secondaries") {
             pick(choices::kOnOff, s.optional_secondaries);
+        } else if (key == "sprint") {
+            pick(choices::kOnOff, s.sprint);
+        } else if (key == "jump") {
+            pick(choices::kOnOff, s.jump);
         } else if (key == "aim_mode") {
             pick(choices::kAimModes, s.aimMode);
         } else if (key == "lod_distance") {
@@ -375,10 +381,12 @@ std::string settingsJson(const Settings& s) {
     Json json;
     json["SettingsVersion"] = 14;
     json["GpuRenderer"] = s.gpuRenderer;
+    json["PrecompileShaders"] = s.precompileShaders;
     json["Smooth60"] = s.smooth60;
     json["SmoothHz"] = s.smoothHz;
     json["Threads"] = s.threads;
     json["SkipMovies"] = s.skipMovies;
+    json["Subtitles"] = s.subtitles;
     json["SkipStartupVideos"] = s.skipStartupVideos;
     json["InfiniteAmmo"] = s.infiniteAmmo;
     json["SilverWeaponMode"] = s.silverWeaponMode;
@@ -407,6 +415,8 @@ std::string settingsJson(const Settings& s) {
     json["EnemyHealth"] = s.enemy_health;
     json["HeadshotInstakill"] = s.headshot_instakill;
     json["AimMode"] = s.aimMode;
+    json["Sprint"] = s.sprint;
+    json["Jump"] = s.jump;
     json["WindowMode"] = s.windowMode;
     json["ScaleMode"] = s.scaleMode;
     json["PresentFilter"] = s.presentFilter;
@@ -435,10 +445,12 @@ Settings settingsFromJson(std::string_view text) {
     }
     const auto among = [](const auto& list) { return [&list](const std::string& v) { return contains(list, v); }; };
     readField(json, "GpuRenderer", s.gpuRenderer, kAny);
+    readField(json, "PrecompileShaders", s.precompileShaders, kAny);
     readField(json, "Smooth60", s.smooth60, kAny);
     readField(json, "SmoothHz", s.smoothHz, [](long long v) { return contains(choices::kSmoothHz, v); });
     readField(json, "Threads", s.threads, [](long long v) { return v >= 1 && v <= 64; });
     readField(json, "SkipMovies", s.skipMovies, kAny);
+    readField(json, "Subtitles", s.subtitles, kAny);
     // Replace legacy timed controller presses with direct logo-video skipping.
     // An explicit new setting wins, including false or an invalid value.
     readField(json, json.contains("SkipStartupVideos") ? "SkipStartupVideos" : "AdvanceMenus", s.skipStartupVideos,
@@ -475,6 +487,8 @@ Settings settingsFromJson(std::string_view text) {
     readField(json, "BulletDamage", s.bullet_damage, [](long long v) { return contains(choices::kBulletDamages, v); });
     readField(json, "EnemyHealth", s.enemy_health, [](long long v) { return contains(choices::kEnemyHealths, v); });
     readField(json, "HeadshotInstakill", s.headshot_instakill, among(choices::kOnOff));
+    readField(json, "Sprint", s.sprint, among(choices::kOnOff));
+    readField(json, "Jump", s.jump, among(choices::kOnOff));
     readField(json, "AimMode", s.aimMode, among(choices::kAimModes));
     readField(json, "WindowMode", s.windowMode, among(choices::kWindowModes));
     readField(json, "ScaleMode", s.scaleMode, among(choices::kScaleModes));
@@ -538,7 +552,7 @@ Result<bool> saveSettings(const ProjectLayout& project, const Settings& settings
     for (const auto& [name, contents] : files) {
         // Written beside and renamed over, so a crash never leaves half a file the game would read
         const std::filesystem::path target = local / name;
-        const std::filesystem::path temporary = local / (std::string(name) + ".tmp");
+        const std::filesystem::path temporary = local / (std::string(name) + ".launcher.tmp");
         {
             std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
             out.write(contents.data(), static_cast<std::streamsize>(contents.size()));

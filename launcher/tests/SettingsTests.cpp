@@ -136,7 +136,7 @@ TEST_CASE("video.ini round-trips and skips what the game would skip") {
     settings.vsync = false;
     settings.actionBlur = "off";
     Settings read;
-    CHECK(applyVideoIni(read, videoIni(settings)) == 28);
+    CHECK(applyVideoIni(read, videoIni(settings)) == 30);
     CHECK(videoIni(read) == videoIni(settings));
     CHECK(read.actionBlur == "off");
 

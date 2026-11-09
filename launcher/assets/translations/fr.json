@@ -485,5 +485,13 @@
   "AIM MODE": "MODE DE VISÉE",
   "TOGGLE": "BASCULE",
   "HOLD": "MAINTENIR",
-  "Toggle keeps the original aim behavior. Hold aims only while the aim button is held.": "Bascule conserve la visée d’origine. Maintenir permet de viser uniquement tant que le bouton de visée est maintenu."
+  "Toggle keeps the original aim behavior. Hold aims only while the aim button is held.": "Bascule conserve la visée d’origine. Maintenir permet de viser uniquement tant que le bouton de visée est maintenu.",
+  "SUBTITLES": "SOUS-TITRES",
+  "Show subtitles for dialogue and cutscenes. Applies the next time you start the game.": "Afficher les sous-titres des dialogues et des cinématiques. Prend effet au prochain démarrage du jeu.",
+  "PRECOMPILE SHADERS AT STARTUP": "PRÉCOMPILER LES SHADERS AU DÉMARRAGE",
+  "Applies next time you start the game. On prepares recorded shaders before playing. Off skips that preparation; shaders needed during play are still compiled.": "Prend effet au prochain démarrage du jeu. Activé prépare les shaders enregistrés avant de jouer. Désactivé ignore cette préparation ; les shaders nécessaires pendant le jeu sont toujours compilés.",
+  "SPRINT": "SPRINTER",
+  "Hold the Sprint key while moving to run faster. Default: Left Shift. Off keeps original movement.": "Maintenez la touche Sprinter enfoncée pendant le déplacement pour courir plus vite. Par défaut : Maj gauche. Désactivé conserve le mouvement d'origine.",
+  "JUMP": "SAUTER",
+  "Press the Jump key on the ground to jump. Default: Space. Release before jumping again.": "Appuyez sur la touche Sauter au sol pour sauter. Par défaut : Espace. Relâchez avant de sauter à nouveau."
 }

@@ -31,6 +31,8 @@ constexpr std::array kActions = {
     Action{"CYCLE_ITEM", "Cycle item (White)", "X"},
     Action{"BACK", "Back / objectives", "Tab"},
     Action{"PAUSE", "Start (pause)", "P"},
+    Action{"SPRINT", "Sprint", "LShift"},
+    Action{"JUMP", "Jump", "Space"},
 };
 
 constexpr std::array kKeys = {
