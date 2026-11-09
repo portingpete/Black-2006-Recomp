@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+**SFX and music volumes are kept.** The game's own save never brought them back, so they returned to full at every
+start. They are now kept in `local/audio.ini`, saved when changed in either sound menu and restored at startup, with
+or without a saved profile.
+
 **Sprint and jump (optional).** Hold Sprint (Left Shift) while moving to run faster, and press Jump (Space) on the
 ground to jump. Both are off by default; turn them on in the launcher's Gameplay settings and rebind the keys in its
 Controls. Keyboard and mouse only, for player one.

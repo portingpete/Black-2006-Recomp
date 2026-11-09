@@ -264,6 +264,7 @@ std::map<std::string, std::string> gameEnvironment(const ProjectLayout& project,
         {"RECOMP_KELVIN_THREADS", std::to_string(settings.threads)},
         {"RECOMP_VIDEO_INI", gamePath(project.localDirectory() / "video.ini", style)},
         {"RECOMP_CONTROLS_INI", gamePath(project.localDirectory() / "controls.ini", style)},
+        {"RECOMP_AUDIO_INI", gamePath(project.localDirectory() / "audio.ini", style)},  // SFX/music volumes
         {"RECOMP_LANGUAGE", settings.menuLanguage},
         {"RECOMP_SUBTITLES", settings.subtitles ? "1" : "0"},
         {"RECOMP_BLACK_INPUT_MODE", settings.inputMode},

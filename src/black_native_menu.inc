@@ -1086,11 +1086,80 @@ static void black_native_menu_tick(uint32_t ui)
     _mm_setcsr(caller_csr);
 }
 
+/* BEGIN BLACK_AUDIO_SETTINGS
+ * BLACK does not keep its SFX and music volumes between runs. The profile save writes them (slot +0x18, +0x1C), but
+ * its load (0x1FB300) restores the fields around them and not these, and the autosave's "anything changed?" test
+ * (0x114E00) copies the live volumes into what it compares, so a volume change alone never saves. A volume is
+ * [0x2D45F0]+0x2015C (SFX) or +0x20160 (music), 0..1; 0x119B50 hands both to the sound engine.
+ * They are kept in local\audio.ini instead, so they need no profile: read once the sound engine exists, written
+ * when the player changes them on a sound page (black_audio_saver_tick). RECOMP_AUDIO_INI overrides the path (the
+ * launcher passes it); RECOMP_BLACK_AUDIO_TRACE=1 logs each change of the live values and the engine's copies (lab only). */
+#include "black_audio_settings.inc"
+
+extern void sub_00119B50(void);
+
+static void black_audio_settings_tick(uint32_t ui)
+{
+    static int restored, trace = -1;
+    static BlackAudioSaver saver;
+    static uint32_t traced[4];
+    static char path[MAX_PATH];
+    const unsigned caller_csr = _mm_getcsr();
+    const uint32_t game = GUEST32(0x002D45F0u), audio = GUEST32(0x002D0D60u);
+    if (!ui || !game || !audio || !black_pc_ram_span(game + 0x2015Cu, 8u) || !black_pc_ram_span(audio + 0xD3B4u, 0x18u)) return;
+    if (!restored) {
+        const uint32_t engine = GUEST32(audio + 0xD3C8u);
+        const char *e = getenv("RECOMP_AUDIO_INI");
+        int sfx = black_audio_percent(GUEST32(game + 0x2015Cu)), music = black_audio_percent(GUEST32(game + 0x20160u));
+        /* the page is prepared and the engine's music and effect groups exist: 0x119B50 reaches them */
+        if (GUEST32(ui + 0x381Cu) != 2u || !engine || !black_pc_ram_span(engine + 0x34u, 12u) || !GUEST32(engine + 0x34u) ||
+            !GUEST32(engine + 0x38u) || !GUEST32(engine + 0x3Cu) || sfx < 0 || music < 0) { _mm_setcsr(caller_csr); return; }
+        snprintf(path, sizeof(path), "%s", e && *e ? e : "local\\audio.ini");
+        if (black_audio_load(path, &sfx, &music)) {
+            const BlackRegs none = {0};
+            GUEST32(game + 0x2015Cu) = black_audio_bits(sfx);
+            GUEST32(game + 0x20160u) = black_audio_bits(music);
+            GUEST32(0x002F416Cu) = (uint32_t)sfx;     /* what the options pages rebuild both volumes from */
+            GUEST32(0x002F4170u) = (uint32_t)music;
+            black_guest_call(sub_00119B50, &none, NULL, 0, 0x00124330u);
+            fprintf(stderr, "[AUDIO] %s: SFX %d, music %d\n", path, sfx, music);
+        }
+        black_audio_saver_start(&saver, sfx, music);
+        restored = 1;
+    } else {
+        const int sfx = black_audio_percent(GUEST32(game + 0x2015Cu)), music = black_audio_percent(GUEST32(game + 0x20160u));
+        char page[64];
+        bnm_get_string(ui + 0x3840u, page, sizeof(page));
+        if (sfx >= 0 && music >= 0 && black_audio_saver_tick(&saver, sfx, music, black_audio_sound_page(page))) {
+            const int saved = black_audio_save(path, saver.pend_sfx, saver.pend_music);
+            if (saved) {
+                saver.file_sfx = saver.pend_sfx;
+                saver.file_music = saver.pend_music;
+            }
+            fprintf(stderr, "[AUDIO] SFX %d, music %d: %s %s\n", saver.pend_sfx, saver.pend_music,
+                    saved ? "saved to" : "COULD NOT SAVE", path);
+        }
+    }
+    if (trace < 0) { const char *e = getenv("RECOMP_BLACK_AUDIO_TRACE"); trace = e && *e == '1'; }
+    if (trace) {
+        const uint32_t now[4] = { GUEST32(game + 0x2015Cu), GUEST32(game + 0x20160u), GUEST32(audio + 0xD3BCu), GUEST32(audio + 0xD3C0u) };
+        if (memcmp(now, traced, sizeof(now))) {
+            float v[4];
+            memcpy(v, now, sizeof(v));
+            memcpy(traced, now, sizeof(now));
+            fprintf(stderr, "[AUDIO] live SFX %.3f music %.3f, engine SFX %.3f music %.3f\n", v[0], v[1], v[2], v[3]);
+        }
+    }
+    _mm_setcsr(caller_csr);
+}
+/* END BLACK_AUDIO_SETTINGS */
+
 void sub_00124330(void)
 {
     const uint32_t ui = black_pc_ram_span(g_esp, 8u) ? GUEST32(g_esp + 4u) : 0u;
     black_native_menu_tick(ui);
     sub_00124330_gen();
+    black_audio_settings_tick(ui);
 }
 
 /* The front end's idle check (al = 1: there was input this frame), called once a frame by sub_0020ECF0 while the page
